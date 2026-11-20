@@ -544,7 +544,7 @@ class Session(Container, NotificationHandler, JsonStoreHandler):
         ocio_view="Raw",
         timecode="",
         status_callback=None,
-        bake_grade=True,
+        bake_grade=None,
         write_grade_cdl=False,
         write_grade_lut=False,
         media=None,
@@ -603,7 +603,9 @@ class Session(Container, NotificationHandler, JsonStoreHandler):
                 finished successfully.
             bake_grade(bool): True to burn the xSTUDIO grade layers into the
                 render (even if grades are bypassed in the viewer). False to
-                leave the grade out of the render.
+                leave the grade out of the render. None (default) keeps the
+                previous behaviour: the render follows the viewer's grade
+                bypass setting.
             write_grade_cdl(bool): Only used when bake_grade is False. Write
                 the grade next to the render as an ASC CDL collection (.ccc).
             write_grade_lut(bool): Only used when bake_grade is False. Write
@@ -638,11 +640,12 @@ class Session(Container, NotificationHandler, JsonStoreHandler):
             out_frame = container.trimmed_range.frame_duration().frames()
 
         export_options = {
-            "bake_grade": bool(bake_grade),
             "sidecar_cdl": bool(write_grade_cdl),
             "sidecar_lut": bool(write_grade_lut),
             "tokens": dict(naming_tokens) if naming_tokens else {}
         }
+        if bake_grade is not None:
+            export_options["bake_grade"] = bool(bake_grade)
         if media:
             export_options["media_filter"] = [str(m.uuid) for m in media]
         export_options_js = JsonStore()
