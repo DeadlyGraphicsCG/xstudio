@@ -32,6 +32,13 @@ XsWindow {
             // was left in the shared hotkeys model last time
             searchBtn.text = initialFilter
             hotkeysModel.searchString = initialFilter
+            if (initialFilter != "") {
+                // make room for the filter text and show it from the start
+                wHint = Math.max(wHint, 200)
+                width = Math.max(width, 720)
+                searchBtn.isExpanded = true
+                searchBtn.searchBar.cursorPosition = 0
+            }
         }
     }
 
