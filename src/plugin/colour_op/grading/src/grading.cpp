@@ -378,6 +378,9 @@ void GradingTool::on_screen_media_changed(
 
 void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const int role) {
 
+    if (role == module::Attribute::Value)
+        remember_edited_grade_control(attribute_uuid);
+
     // Only care about attribute value update.
     if (role != module::Attribute::Value)
         return;
@@ -740,29 +743,19 @@ void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const i
 
 void GradingTool::register_hotkeys() {
 
-    bypass_hotkey_ = register_hotkey(
-        int('B'),
-        ui::ControlModifier,
-        "Bypass all grades",
-        "Bypass all grades applied on all media");
-
-    undo_hotkey_ = register_hotkey(
-        int('Z'),
-        ui::ControlModifier,
-        "Undo (Annotation edit)",
-        "Undoes your last edits to an annotation");
-
-    redo_hotkey_ = register_hotkey(
-        int('Z'),
-        ui::ControlModifier | ui::ShiftModifier,
-        "Redo (Annotation edit)",
-        "Redoes your last undone edit on an annotation");
+    // All grading shortcuts (bypass, undo/redo and the grade layer / control
+    // shortcuts) are registered together in grading_hotkeys.cpp
+    register_grading_hotkeys();
 }
 
 void GradingTool::hotkey_pressed(
     const utility::Uuid &hotkey_uuid,
     const std::string & /*context*/,
     const std::string & /*window*/) {
+
+    if (grading_hotkey_pressed(hotkey_uuid)) {
+        return;
+    }
 
     // This shortcut should be active even when no grading panel is visible
     if (hotkey_uuid == bypass_hotkey_) {

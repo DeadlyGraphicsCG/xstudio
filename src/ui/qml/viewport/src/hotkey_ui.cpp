@@ -48,19 +48,18 @@ nlohmann::json modifier_keys(const Hotkey &hk, const bool _default) {
 
 HotkeysUI::HotkeysUI(QObject *parent) : super(parent) {
 
-    setRoleNames(
-        std::vector<std::string>(
-            {"clashWarning",
-             "defaultKeyboardKey",
-             "defaultKeyModifiers",
-             "keyboardKey",
-             "hotkeyUuid",
-             "keyModifiers",
-             "hotkeyName",
-             "hotkeyCategory",
-             "hotkeyDescription",
-             "hotkeySequence",
-             "hotkeyErrorMessage"}));
+    setRoleNames(std::vector<std::string>(
+        {"clashWarning",
+         "defaultKeyboardKey",
+         "defaultKeyModifiers",
+         "keyboardKey",
+         "hotkeyUuid",
+         "keyModifiers",
+         "hotkeyName",
+         "hotkeyCategory",
+         "hotkeyDescription",
+         "hotkeySequence",
+         "hotkeyErrorMessage"}));
 
     init(CafSystemObject::get_actor_system());
 
@@ -129,14 +128,34 @@ void HotkeysUI::makeFilteredHotkeysData() {
 
     filtered_hotkeys_data_.clear();
 
+    // The filter text can hold several terms separated by '|' (e.g.
+    // "Grading|Channel"); a hotkey is shown if it matches any of them.
+    QStringList terms;
+    for (const auto &t : search_string_.split('|')) {
+        if (!t.trimmed().isEmpty())
+            terms.append(t.trimmed());
+    }
+    if (terms.isEmpty() && !search_string_.isEmpty()) {
+        // e.g. the user is looking for the '|' key itself
+        terms.append(search_string_);
+    }
+
+    auto matches = [&terms](const Hotkey &hk) -> bool {
+        if (terms.isEmpty())
+            return true;
+        for (const auto &term : terms) {
+            if (QStringFromStd(hk.hotkey_name()).contains(term, Qt::CaseInsensitive) ||
+                QStringFromStd(hk.hotkey_description()).contains(term, Qt::CaseInsensitive) ||
+                QStringFromStd(hk.hotkey_origin()).contains(term, Qt::CaseInsensitive) ||
+                QStringFromStd(hk.hotkey_sequence()).contains(term, Qt::CaseInsensitive)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     for (const auto &hk : hotkeys_data_) {
-        if (search_string_.isEmpty() ||
-            QStringFromStd(hk.hotkey_name()).contains(search_string_, Qt::CaseInsensitive) ||
-            QStringFromStd(hk.hotkey_description())
-                .contains(search_string_, Qt::CaseInsensitive) ||
-            QStringFromStd(hk.hotkey_origin()).contains(search_string_, Qt::CaseInsensitive) ||
-            QStringFromStd(hk.hotkey_sequence())
-                .contains(search_string_, Qt::CaseInsensitive)) {
+        if (matches(hk)) {
             filtered_hotkeys_data_.push_back(hk);
         }
     }
@@ -162,9 +181,7 @@ void HotkeysUI::makeFilteredHotkeysData() {
         for (const auto &other_hk : hotkeys_data_) {
             if (other_hk.key_id() == hk.key_id() && other_hk.modifiers() == hk.modifiers() &&
                 other_hk.uuid() != hk.uuid()) {
-                clash_warning = fmt::format(
-                    "clashes with hotkey '{}'",
-                    other_hk.hotkey_name());
+                clash_warning = fmt::format("clashes with hotkey '{}'", other_hk.hotkey_name());
             }
         }
 
@@ -277,7 +294,9 @@ QVariant HotkeysUI::assignTestSequence() {
         int modifier = 0;
         Hotkey::sequence_to_key_and_modifier(sequence, keycode, modifier);
         caf::scoped_actor sys{system()};
-        utility::request_receive<Hotkey>(
+        // the keypress monitor replies with a bool (or an error if the hotkey
+        // could not be changed)
+        utility::request_receive<bool>(
             *sys,
             keyboard_manager_,
             keypress_monitor::register_hotkey_atom_v,
@@ -333,12 +352,11 @@ void HotkeysUI::setTestSequence(const QVariant &test_sequence) {
                         if (clashing_hotkey_name == "self") {
                             test_sequence_status_ = QStringFromStd("No Change");
                         } else if (!clashing_hotkey_name.empty()) {
-                            test_sequence_status_ = QStringFromStd(
-                                fmt::format(
-                                    "Clashes with hotkey '{}', which will be unbound if you "
-                                    "hit "
-                                    "assign.",
-                                    clashing_hotkey_name));
+                            test_sequence_status_ = QStringFromStd(fmt::format(
+                                "Clashes with hotkey '{}', which will be unbound if you "
+                                "hit "
+                                "assign.",
+                                clashing_hotkey_name));
                         } else {
                             test_sequence_status_ = "OK";
                         }
@@ -346,9 +364,7 @@ void HotkeysUI::setTestSequence(const QVariant &test_sequence) {
                             emit testSequenceStatusChanged();
                         }
                     },
-                    [=](const error &err) {
-                        log_caf_error(err);
-                    });
+                    [=](const error &err) { log_caf_error(err); });
         }
     } catch (const std::exception &err) {
         spdlog::warn("{} {}", __PRETTY_FUNCTION__, err.what());
@@ -504,9 +520,10 @@ void HotkeyReferenceUI::init(caf::actor_system &system_) {
             [=](keypress_monitor::hotkey_event_atom, const std::vector<Hotkey> &hotkeys) {
                 // hotkeys have been updated
                 for (const auto &hk : hotkeys) {
-                    if (hk.uuid() == hotkey_.uuid() || StdFromQString(hotkey_name_) == hk.hotkey_name()) {
+                    if (hk.uuid() == hotkey_.uuid() ||
+                        StdFromQString(hotkey_name_) == hk.hotkey_name()) {
                         bool seq_changed = hk.hotkey_sequence() != hotkey_.hotkey_sequence();
-                        hotkey_ = hk;
+                        hotkey_          = hk;
                         if (seq_changed) {
                             Q_EMIT sequenceChanged();
                             Q_EMIT keyChanged();
@@ -517,9 +534,10 @@ void HotkeyReferenceUI::init(caf::actor_system &system_) {
             },
             [=](keypress_monitor::hotkey_event_atom, Hotkey &hotkey) {
                 // a hotkey has changed
-                if (hotkey.uuid() == hotkey_.uuid() || StdFromQString(hotkey_name_) == hotkey.hotkey_name()) {
+                if (hotkey.uuid() == hotkey_.uuid() ||
+                    StdFromQString(hotkey_name_) == hotkey.hotkey_name()) {
                     bool seq_changed = hotkey.hotkey_sequence() != hotkey_.hotkey_sequence();
-                    hotkey_ = hotkey;
+                    hotkey_          = hotkey;
                     if (seq_changed) {
                         Q_EMIT sequenceChanged();
                         Q_EMIT keyChanged();

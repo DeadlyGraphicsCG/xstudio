@@ -22,6 +22,26 @@ XsWindow {
     property int groupColumns: Math.max(1, (width-60)/widthHint)
     property int wHint: 50
 
+    // Filter text applied when the dialog is shown. Several terms can be
+    // separated with '|', e.g. "Grading|Channel" (used by the Grading panel).
+    property string initialFilter: ""
+
+    onVisibleChanged: {
+        if (visible) {
+            // start from the requested filter rather than whatever filter
+            // was left in the shared hotkeys model last time
+            searchBtn.text = initialFilter
+            hotkeysModel.searchString = initialFilter
+            if (initialFilter != "") {
+                // make room for the filter text and show it from the start
+                wHint = Math.max(wHint, 200)
+                width = Math.max(width, 720)
+                searchBtn.isExpanded = true
+                searchBtn.searchBar.cursorPosition = 0
+            }
+        }
+    }
+
     ColumnLayout {
 
         id: rootLayout
