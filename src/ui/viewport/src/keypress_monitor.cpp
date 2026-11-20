@@ -238,10 +238,13 @@ KeypressMonitor::KeypressMonitor(caf::actor_config &cfg) : caf::event_based_acto
                     }
 
                     if (!overrides_changed_) {
-                        // schedule an update of the hotkey overrides in the global store
+                        // schedule an update of the hotkey overrides in the global store.
+                        // Keep the delay short: the preferences are written to disk when
+                        // xSTUDIO quits, and a change that has not reached the global store
+                        // by then would be lost.
                         overrides_changed_ = true;
                         mail(json_store::update_atom_v, register_hotkey_atom_v)
-                            .delay(std::chrono::seconds(5))
+                            .delay(std::chrono::milliseconds(500))
                             .send(caf::actor_cast<caf::actor>(this));
                     }
                     return true;

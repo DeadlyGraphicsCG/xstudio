@@ -128,14 +128,34 @@ void HotkeysUI::makeFilteredHotkeysData() {
 
     filtered_hotkeys_data_.clear();
 
+    // The filter text can hold several terms separated by '|' (e.g.
+    // "Grading|Channel"); a hotkey is shown if it matches any of them.
+    QStringList terms;
+    for (const auto &t : search_string_.split('|')) {
+        if (!t.trimmed().isEmpty())
+            terms.append(t.trimmed());
+    }
+    if (terms.isEmpty() && !search_string_.isEmpty()) {
+        // e.g. the user is looking for the '|' key itself
+        terms.append(search_string_);
+    }
+
+    auto matches = [&terms](const Hotkey &hk) -> bool {
+        if (terms.isEmpty())
+            return true;
+        for (const auto &term : terms) {
+            if (QStringFromStd(hk.hotkey_name()).contains(term, Qt::CaseInsensitive) ||
+                QStringFromStd(hk.hotkey_description()).contains(term, Qt::CaseInsensitive) ||
+                QStringFromStd(hk.hotkey_origin()).contains(term, Qt::CaseInsensitive) ||
+                QStringFromStd(hk.hotkey_sequence()).contains(term, Qt::CaseInsensitive)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
     for (const auto &hk : hotkeys_data_) {
-        if (search_string_.isEmpty() ||
-            QStringFromStd(hk.hotkey_name()).contains(search_string_, Qt::CaseInsensitive) ||
-            QStringFromStd(hk.hotkey_description())
-                .contains(search_string_, Qt::CaseInsensitive) ||
-            QStringFromStd(hk.hotkey_origin()).contains(search_string_, Qt::CaseInsensitive) ||
-            QStringFromStd(hk.hotkey_sequence())
-                .contains(search_string_, Qt::CaseInsensitive)) {
+        if (matches(hk)) {
             filtered_hotkeys_data_.push_back(hk);
         }
     }
@@ -274,7 +294,9 @@ QVariant HotkeysUI::assignTestSequence() {
         int modifier = 0;
         Hotkey::sequence_to_key_and_modifier(sequence, keycode, modifier);
         caf::scoped_actor sys{system()};
-        utility::request_receive<Hotkey>(
+        // the keypress monitor replies with a bool (or an error if the hotkey
+        // could not be changed)
+        utility::request_receive<bool>(
             *sys,
             keyboard_manager_,
             keypress_monitor::register_hotkey_atom_v,
