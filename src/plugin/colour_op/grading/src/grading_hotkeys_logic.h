@@ -22,6 +22,16 @@ inline const std::vector<std::string> &grade_control_groups() {
     return groups;
 }
 
+// Grade controls that live outside those groups but should still be reset by
+// 'Reset Active Grade Control': the per channel R/G/B fields added for issue #1
+// ("Exposure RGB", "Contrast RGB", "Saturation RGB"). Names that do not exist
+// are simply never matched.
+inline bool is_extra_grade_control(const std::string &attribute_title) {
+    static const std::vector<std::string> names = {
+        "Exposure RGB", "Contrast RGB", "Saturation RGB"};
+    return std::find(names.begin(), names.end(), attribute_title) != names.end();
+}
+
 // Work out which grade layer to select when the user steps to the next
 // (step > 0) or previous (step < 0) layer.
 //   current : index of the selected layer, or -1 when no layer is selected

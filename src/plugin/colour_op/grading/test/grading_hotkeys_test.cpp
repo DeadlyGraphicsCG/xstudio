@@ -185,3 +185,11 @@ TEST(GradingHotkeysTest, DefaultHotkeysAreValidAndUnique) {
     EXPECT_EQ(default_hotkeys().size(), 4u);
     EXPECT_STREQ(hotkey_category(), "Grading");
 }
+
+TEST(GradingHotkeysTest, PerChannelFieldsCountAsGradeControls) {
+    EXPECT_TRUE(is_extra_grade_control("Exposure RGB"));
+    EXPECT_TRUE(is_extra_grade_control("Contrast RGB"));
+    EXPECT_TRUE(is_extra_grade_control("Saturation RGB"));
+    EXPECT_FALSE(is_extra_grade_control("grading_action"));
+    EXPECT_FALSE(is_extra_grade_control(""));
+}

@@ -378,11 +378,12 @@ void GradingTool::on_screen_media_changed(
 
 void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const int role) {
 
+    if (role == module::Attribute::Value)
+        remember_edited_grade_control(attribute_uuid);
+
     // Only care about attribute value update.
     if (role != module::Attribute::Value)
         return;
-
-    remember_edited_grade_control(attribute_uuid);
 
     if (attribute_uuid == tool_opened_count_->uuid()) {
 

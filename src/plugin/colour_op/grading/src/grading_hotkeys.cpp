@@ -138,7 +138,10 @@ bool GradingTool::grading_hotkey_pressed(const utility::Uuid &hotkey_uuid) {
 void GradingTool::remember_edited_grade_control(const utility::Uuid &attribute_uuid) {
 
     auto attr = get_attribute(attribute_uuid);
-    if (attr && attr->belongs_to_groups(gh::grade_control_groups()) &&
+    if (attr &&
+        (attr->belongs_to_groups(gh::grade_control_groups()) ||
+         gh::is_extra_grade_control(
+             attr->get_role_data<std::string>(module::Attribute::Title))) &&
         attr->has_role_data(module::Attribute::DefaultValue)) {
         last_edited_grade_control_ = attribute_uuid;
     }
