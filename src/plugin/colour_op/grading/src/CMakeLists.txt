@@ -10,6 +10,7 @@ set(SOURCES
 	grading_colour_op.cpp
 	grading_common.cpp
 	grading.cpp
+	grading_hotkeys.cpp
 	grading_mask_gl_renderer.cpp
 	serialisers/1.0/serialiser_1_pt_0.cpp
 )

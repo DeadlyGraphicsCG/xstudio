@@ -160,6 +160,22 @@ class GradingTool : public plugin::StandardPlugin {
     utility::Uuid undo_hotkey_;
     utility::Uuid redo_hotkey_;
 
+    // Grading keyboard shortcuts (implemented in grading_hotkeys.cpp)
+    utility::Uuid register_grading_hotkey(
+        const std::string &sequence,
+        const std::string &name,
+        const std::string &description,
+        const utility::Uuid &uuid = utility::Uuid());
+    void register_grading_hotkeys();
+    bool grading_hotkey_pressed(const utility::Uuid &hotkey_uuid);
+    void remember_edited_grade_control(const utility::Uuid &attribute_uuid);
+    void toggle_current_grade_layer();
+    void reset_active_grade_control();
+    void step_grade_layer(const int step);
+
+    std::map<utility::Uuid, int> grading_hotkey_actions_;
+    utility::Uuid last_edited_grade_control_;
+
     // Current media info (eg. for Bookmark creation)
     bool playhead_is_playing_ {false};
     int playhead_media_frame_ = {0};
