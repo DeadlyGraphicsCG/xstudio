@@ -6,6 +6,8 @@
 #include <caf/actor_registry.hpp>
 
 #include "video_render_worker.hpp"
+#include "export_profiles.hpp"
+#include "grade_sidecar.hpp"
 #include "xstudio/utility/helpers.hpp"
 #include "xstudio/utility/logging.hpp"
 #include "xstudio/atoms.hpp"
@@ -14,6 +16,8 @@
 #include "xstudio/playlist/playlist_actor.hpp"
 
 #include <ImfRgbaFile.h>
+#include <algorithm>
+#include <set>
 #include <vector>
 
 #ifdef _WIN32
@@ -84,13 +88,12 @@ HANDLE open_named_pipe(std::string name) {
         NULL);
 
     if (result == INVALID_HANDLE_VALUE) {
-        throw std::runtime_error(
-            fmt::format(
-                "{} failed to open pipe {} with error: {}",
-                __PRETTY_FUNCTION__,
-                name,
-                last_error())
-                .c_str());
+        throw std::runtime_error(fmt::format(
+                                     "{} failed to open pipe {} with error: {}",
+                                     __PRETTY_FUNCTION__,
+                                     name,
+                                     last_error())
+                                     .c_str());
     }
     return result;
 }
@@ -293,6 +296,7 @@ VideoRenderWorker::VideoRenderWorker(
     const std::string &ocio_view,
     const bool &auto_check_output,
     const std::string &timecode,
+    const utility::JsonStore &export_options,
     caf::actor offscreen_viewport,
     caf::actor colour_pipeline,
     caf::actor renderer_plugin)
@@ -332,6 +336,36 @@ VideoRenderWorker::VideoRenderWorker(
 
     render_format_ = video_render_bit_depth_.find("16") == 0 ? viewport::ImageFormat::RGBA_16
                                                              : viewport::ImageFormat::RGBA_8;
+
+    // Export options (all optional, see VideoRenderPlugin::create_render_job)
+    if (export_options.is_object()) {
+        auto flag = [&](const char *key) {
+            return export_options.contains(key) && export_options[key].is_boolean() &&
+                   export_options[key].get<bool>();
+        };
+        if (export_options.contains("bake_grade") && export_options["bake_grade"].is_boolean())
+            bake_grade_ = export_options["bake_grade"].get<bool>();
+        sidecar_cdl_ = flag("sidecar_cdl");
+        sidecar_lut_ = flag("sidecar_lut");
+        if (export_options.contains("lut_size") &&
+            export_options["lut_size"].is_number_integer())
+            lut_size_ = std::clamp(export_options["lut_size"].get<int>(), 2, 129);
+        if (export_options.contains("media_filter") &&
+            export_options["media_filter"].is_array()) {
+            for (const auto &u : export_options["media_filter"]) {
+                if (!u.is_string())
+                    continue;
+                // Qt writes uuids with curly braces
+                auto s = u.get<std::string>();
+                s.erase(
+                    std::remove_if(
+                        s.begin(), s.end(), [](const char c) { return c == '{' || c == '}'; }),
+                    s.end());
+                if (!s.empty())
+                    media_filter_.emplace_back(utility::Uuid(s));
+            }
+        }
+    }
 
 #ifdef _WIN32
     // On Windows, drive-letter paths (Z:/foo) parse as URIs with scheme=Z,
@@ -397,6 +431,7 @@ VideoRenderWorker::VideoRenderWorker(
                 update_status(
                     fmt::format("FFMpeg failed with code {}. Check log.", return_code), Failed);
             } else {
+                write_grade_sidecars();
                 update_status("Complete", Complete);
                 if (auto_check_output_) {
                     add_output_to_session();
@@ -724,6 +759,17 @@ void VideoRenderWorker::start_ffmpeg_process() {
 
     update_status("Starting FFMPEG");
 
+    // naming templates can put renders into folders that don't exist yet
+    for (const auto &p : {output_file_path_, output_audio_path_}) {
+        try {
+            const auto folder = std::filesystem::path(p).parent_path();
+            if (!p.empty() && !folder.empty() && !std::filesystem::exists(folder))
+                std::filesystem::create_directories(folder);
+        } catch (std::exception &e) {
+            log_line(fmt::format("Could not make the output folder for {}: {}", p, e.what()));
+        }
+    }
+
 #ifdef _WIN32
 
     output_yuv_filename_ =
@@ -747,13 +793,12 @@ void VideoRenderWorker::start_ffmpeg_process() {
     output_yuv_filename_ = fmt::format(
         "{}/xstudio_render_image_pipe_{}.yuv", tmpdir.string(), to_string(job_uuid_));
     if (mkfifo(output_yuv_filename_.c_str(), 0666) == -1) {
-        throw std::runtime_error(
-            fmt::format(
-                "{} failed to create fifo with name {}, errno error: {}",
-                __PRETTY_FUNCTION__,
-                output_yuv_filename_,
-                strerror(errno))
-                .c_str());
+        throw std::runtime_error(fmt::format(
+                                     "{} failed to create fifo with name {}, errno error: {}",
+                                     __PRETTY_FUNCTION__,
+                                     output_yuv_filename_,
+                                     strerror(errno))
+                                     .c_str());
     }
     if (!audio_codec_opts_.empty()) {
         output_audio_filename_ = fmt::format(
@@ -921,8 +966,16 @@ void VideoRenderWorker::clone_render_target(
             // are strung together.
             const auto playhead_selection = utility::request_receive<caf::actor>(
                 *sys, renderable_, playlist::selection_actor_atom_v);
-            mail(playlist::select_all_media_atom_v).send(playhead_selection);
+            if (media_filter_.empty()) {
+                mail(playlist::select_all_media_atom_v).send(playhead_selection);
+            } else {
+                // only render the chosen clips (e.g. 'Export Clip with Grade')
+                utility::request_receive<bool>(
+                    *sys, playhead_selection, playlist::select_media_atom_v, media_filter_);
+            }
         }
+
+        prepare_grade(sys, bookmarks_serialisation, media);
 
     } catch (std::exception &e) {
         update_status(
@@ -1238,11 +1291,169 @@ void VideoRenderWorker::add_output_to_session() {
                         .request(session, infinite)
                         .then(do_send, handle_error);
                 } else {
-                    do_send(
-                        utility::UuidUuidActor(
-                            utility::Uuid(),
-                            utility::UuidActor(utility::Uuid(), check_playlist)));
+                    do_send(utility::UuidUuidActor(
+                        utility::Uuid(), utility::UuidActor(utility::Uuid(), check_playlist)));
                 }
             },
             handle_error);
+}
+
+void VideoRenderWorker::log_line(const std::string &line) {
+    // shows up in the job's log in the render queue, together with the
+    // ffmpeg output. The trailing blank line keeps it safe from ffmpeg
+    // progress lines, which overwrite the last line of the log.
+    ffmpeg_stdout_ += fmt::format("[xSTUDIO] {}\n\n", line);
+}
+
+void VideoRenderWorker::prepare_grade(
+    caf::scoped_actor &sys,
+    const utility::JsonStore &bookmarks_serialisation,
+    const utility::UuidActorVector &media) {
+
+    if (!bake_grade_) {
+        // older callers: keep the old behaviour (render looks like the viewer)
+        return;
+    }
+
+    // Tell the grading colour op what to do with the frames of our private
+    // copy of the media, through their colour settings: apply the grade
+    // even if the viewer's grade bypass is on, or leave it out. (The grade
+    // layers themselves are bookmarks of the session, which the render
+    // shares with the viewer, so they can't simply be left out of the copy.)
+    for (const auto &m : media) {
+        try {
+            auto params = utility::request_receive<utility::JsonStore>(
+                *sys, m.actor(), colour_pipeline::get_colour_pipe_params_atom_v);
+            if (!params.is_object())
+                params = utility::JsonStore(nlohmann::json::object());
+            params["video_render_bake_grade"] = *bake_grade_;
+            utility::request_receive<bool>(
+                *sys, m.actor(), colour_pipeline::set_colour_pipe_params_atom_v, params);
+        } catch (std::exception &e) {
+            spdlog::debug("{} {}", __PRETTY_FUNCTION__, e.what());
+        }
+    }
+
+    if (*bake_grade_) {
+        log_line(fmt::format(
+            "Grade: burnt into the render ({} grade layers found).",
+            grade_sidecar::count_grading_bookmarks(bookmarks_serialisation)));
+        return;
+    }
+
+    log_line("Grade: left out of the render.");
+
+    if (!sidecar_cdl_ && !sidecar_lut_)
+        return;
+
+    // Collect the grade of every clip we render, so we can write it next to
+    // the render when it has finished.
+    utility::UuidActorVector clips;
+    try {
+        clips = utility::request_receive<utility::UuidActorVector>(
+            *sys, renderable_, playlist::get_media_atom_v);
+    } catch (std::exception &e) {
+        clips = media;
+    }
+
+    std::set<std::string> used_names;
+    for (const auto &m : clips) {
+
+        if (!media_filter_.empty() &&
+            std::find(media_filter_.begin(), media_filter_.end(), m.uuid()) ==
+                media_filter_.end())
+            continue;
+
+        grade_sidecar::ClipGrade clip;
+        clip.layers =
+            grade_sidecar::grade_layers_for_media(bookmarks_serialisation, to_string(m.uuid()));
+        if (clip.layers.empty())
+            continue;
+
+        std::string name = "clip";
+        try {
+            name = utility::request_receive<std::string>(*sys, m.actor(), utility::name_atom_v);
+        } catch (...) {
+        }
+        try {
+            clip.colour_params = utility::request_receive<utility::JsonStore>(
+                *sys, m.actor(), colour_pipeline::get_colour_pipe_params_atom_v);
+        } catch (...) {
+            clip.colour_params = nlohmann::json::object();
+        }
+
+        clip.clip_name = export_profiles::sanitise_token_value(
+            grade_sidecar::clip_name_from_colour_params(clip.colour_params, name));
+        // two clips of the same shot: keep names unique
+        std::string unique = clip.clip_name;
+        for (int i = 2; used_names.count(unique); ++i)
+            unique = fmt::format("{}_{}", clip.clip_name, i);
+        clip.clip_name = unique;
+        used_names.insert(unique);
+
+        sidecar_clips_.push_back(clip);
+    }
+}
+
+void VideoRenderWorker::write_grade_sidecars() {
+
+    if (!bake_grade_ || *bake_grade_ || (!sidecar_cdl_ && !sidecar_lut_))
+        return;
+
+    if (sidecar_clips_.empty()) {
+        log_line("No grade found on the rendered clips, so no grade files were written.");
+        return;
+    }
+
+    // name sidecars after the render: /renders/shot_v001.mov -> /renders/shot_v001.ccc
+    // and /renders/shot_v001.####.png -> /renders/shot_v001.ccc
+    const std::filesystem::path out(output_file_path_);
+    std::string stem = out.stem().string();
+    while (!stem.empty() && (stem.back() == '#' || stem.back() == '.' || stem.back() == '@'))
+        stem.pop_back();
+    if (stem.empty())
+        stem = "grade";
+    const auto base = (out.parent_path() / stem).string();
+
+    std::vector<std::string> warnings;
+
+    auto write_file = [&](const std::string &path, const std::string &text) {
+        std::ofstream f(path, std::ios::out | std::ios::trunc);
+        if (f.is_open()) {
+            f << text;
+            f.close();
+            log_line(fmt::format("Wrote grade file {}", path));
+        } else {
+            log_line(fmt::format("Could not write grade file {}", path));
+        }
+    };
+
+    try {
+        if (sidecar_cdl_) {
+            const auto ccc = grade_sidecar::make_ccc(sidecar_clips_, warnings);
+            if (!ccc.empty())
+                write_file(base + ".ccc", ccc);
+        }
+
+        if (sidecar_lut_) {
+            for (const auto &clip : sidecar_clips_) {
+                const auto cube = grade_sidecar::bake_cube(clip, lut_size_, warnings);
+                if (cube.empty())
+                    continue;
+                write_file(
+                    sidecar_clips_.size() == 1
+                        ? base + ".cube"
+                        : fmt::format("{}_{}.cube", base, clip.clip_name),
+                    cube);
+            }
+        }
+    } catch (std::exception &e) {
+        log_line(fmt::format("Failed to write grade files: {}", e.what()));
+    }
+
+    std::set<std::string> shown;
+    for (const auto &w : warnings) {
+        if (shown.insert(w).second)
+            log_line("Note: " + w);
+    }
 }

@@ -4,12 +4,15 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 COMPONENTS Core REQUIRED)
+find_package(OpenColorIO CONFIG)
 
 set(SOURCES
 	video_render_plugin.cpp
 	video_render_worker.cpp
 	video_render_gl_framegrab_to_yuv.cpp
 	video_render_gl_framegrab_to_rgb10bit.cpp
+	export_profiles.cpp
+	grade_sidecar.cpp
 )
 
 qt6_add_resources(SOURCES qml/video_render_plugin.qrc)
@@ -28,6 +31,7 @@ target_link_libraries(${PROJECT_NAME}
 		xstudio::playlist
 		xstudio::ui::qml::helper
 		xstudio::ui::opengl::viewport
+		OpenColorIO::OpenColorIO
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES LINK_DEPENDS_NO_SHARED true)

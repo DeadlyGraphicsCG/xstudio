@@ -105,6 +105,17 @@ RowLayout {
         return combo_box.currentText;
     }
 
+    // used by export profiles: pick a preset by its name. Returns false if
+    // there is no preset with that name.
+    function set_preset_name(name) {
+        var idx = attr_options.indexOf(name)
+        if (idx != -1) {
+            combo_box.currentIndex = idx
+            return true
+        }
+        return false
+    }
+
     XsComboBox { 
 
         id: combo_box

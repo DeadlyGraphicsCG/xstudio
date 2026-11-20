@@ -4,9 +4,13 @@
 #include <caf/actor_config.hpp>
 #include <caf/behavior.hpp>
 #include <caf/event_based_actor.hpp>
+#include <caf/scoped_actor.hpp>
 #include <fstream>
+#include <optional>
 #include "xstudio/utility/json_store.hpp"
+#include "xstudio/utility/uuid.hpp"
 #include "xstudio/media_reader/image_buffer.hpp"
+#include "grade_sidecar.hpp"
 
 namespace xstudio::video_render_plugin_1_0 {
 
@@ -61,6 +65,7 @@ class VideoRenderWorker : public caf::event_based_actor {
         const std::string &ocio_view,
         const bool &auto_check_output,
         const std::string &timecode,
+        const utility::JsonStore &export_options,
         caf::actor offscreen_viewport,
         caf::actor colour_pipeline,
         caf::actor renderer_plugin);
@@ -90,6 +95,14 @@ class VideoRenderWorker : public caf::event_based_actor {
         const utility::Uuid &parent_playlist_item_id,
         const utility::Uuid &target_render_item_id);
 
+    // grade handling (see export options in the constructor)
+    void prepare_grade(
+        caf::scoped_actor &sys,
+        const utility::JsonStore &bookmarks_serialisation,
+        const utility::UuidActorVector &media);
+    void write_grade_sidecars();
+    void log_line(const std::string &line);
+
     const utility::Uuid job_uuid_;
     std::string render_item_name_;
     std::string output_file_path_;
@@ -108,6 +121,17 @@ class VideoRenderWorker : public caf::event_based_actor {
     std::string ocio_view_;
     bool auto_check_output_;
     std::string timecode_;
+
+    // Export options. With no 'bake_grade' option the render behaves as it
+    // always did: grades are shown just like in the viewer (including the
+    // viewer's grade bypass). With bake_grade true the grade is always
+    // burnt in, with false it is always left out.
+    std::optional<bool> bake_grade_;
+    bool sidecar_cdl_ = {false};
+    bool sidecar_lut_ = {false};
+    int lut_size_     = {33};
+    utility::UuidVector media_filter_;
+    std::vector<grade_sidecar::ClipGrade> sidecar_clips_;
 
     caf::actor offscreen_viewport_;
     caf::actor colour_pipeline_;

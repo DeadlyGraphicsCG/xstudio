@@ -7,6 +7,7 @@
 
 #include "video_render_plugin.hpp"
 #include "video_render_worker.hpp"
+#include "export_profiles.hpp"
 #include "xstudio/media/media_actor.hpp"
 #include "xstudio/utility/helpers.hpp"
 #include "xstudio/utility/logging.hpp"
@@ -19,6 +20,11 @@ using namespace xstudio::ui;
 using namespace xstudio::video_render_plugin_1_0;
 
 namespace {
+
+// The dialog sends this many values when it submits a render. The newer
+// dialog adds one more: a dict of export options (grade baking, sidecar
+// files, naming template tokens ...)
+constexpr size_t render_args_count = 18;
 
 const nlohmann::json header = nlohmann::json::parse(R"(
         {
@@ -35,7 +41,7 @@ const nlohmann::json header = nlohmann::json::parse(R"(
             "percent_complete" : 0.0
         }
         )");
-}
+} // namespace
 
 VideoRenderPlugin::VideoRenderPlugin(
     caf::actor_config &cfg, const utility::JsonStore &init_settings)
@@ -93,6 +99,49 @@ VideoRenderPlugin::VideoRenderPlugin(
         add_boolean_attribute("render_queue_visible", "render_queue_visible", false);
     render_queue_visible->expose_in_ui_attrs_group("video_render_attrs");
 
+    // Export profiles: named, reusable render settings (codec, container,
+    // resolution, colour, grade baking and file naming). They live in the
+    // user preferences so they are kept between xSTUDIO sessions.
+    export_profiles_ = add_json_attribute(
+        "export_profiles", "export_profiles", utility::JsonStore(nlohmann::json::array()));
+    export_profiles_->expose_in_ui_attrs_group("video_render_attrs");
+    export_profiles_->set_preference_path("/plugin/video_render/export_profiles");
+    // tidy up whatever we got from the preferences (older or hand edited
+    // files may miss fields)
+    export_profiles_->set_value(utility::JsonStore(
+        export_profiles::normalise_export_profiles(export_profiles_->value())));
+
+    last_export_profile_ =
+        add_string_attribute("last_export_profile", "last_export_profile", "");
+    last_export_profile_->expose_in_ui_attrs_group("video_render_attrs");
+    last_export_profile_->set_preference_path("/plugin/video_render/last_export_profile");
+
+    // grade options: burn the grade into the pixels, or leave it out and
+    // optionally write it next to the render as CDL / LUT files
+    auto bake_grade = add_boolean_attribute("bake_grade", "bake_grade", true);
+    bake_grade->expose_in_ui_attrs_group("video_render_attrs");
+    bake_grade->set_preference_path("/plugin/video_render/bake_grade");
+
+    auto sidecar_cdl = add_boolean_attribute("sidecar_cdl", "sidecar_cdl", false);
+    sidecar_cdl->expose_in_ui_attrs_group("video_render_attrs");
+    sidecar_cdl->set_preference_path("/plugin/video_render/sidecar_cdl");
+
+    auto sidecar_lut = add_boolean_attribute("sidecar_lut", "sidecar_lut", false);
+    sidecar_lut->expose_in_ui_attrs_group("video_render_attrs");
+    sidecar_lut->set_preference_path("/plugin/video_render/sidecar_lut");
+
+    // feedback for the dialog (errors from profile actions, and the output
+    // path with the naming template filled in)
+    export_profiles_message_ =
+        add_string_attribute("export_profiles_message", "export_profiles_message", "");
+    export_profiles_message_->expose_in_ui_attrs_group("video_render_attrs");
+
+    output_path_preview_ = add_json_attribute(
+        "output_path_preview",
+        "output_path_preview",
+        utility::JsonStore(nlohmann::json::object()));
+    output_path_preview_->expose_in_ui_attrs_group("video_render_attrs");
+
     make_behavior();
     connect_to_ui();
 
@@ -103,6 +152,15 @@ VideoRenderPlugin::VideoRenderPlugin(
         "File|Export",
         1.0f // menu item position
     );
+
+    // Shortcuts into the same dialog, set up for exporting with the grade
+    // and an export profile
+    grade_menu_item_ =
+        insert_menu_item("playlist_context_menu", "Export with Grade ...", "Export", 0.5f);
+    grade_menu_item2_ =
+        insert_menu_item("main menu bar", "Export with Grade ...", "File|Export", 1.5f);
+    grade_clip_menu_item_ =
+        insert_menu_item("media_list_menu_", "Export Clip with Grade ...", "Export", 0.0f);
 
     register_main_menu_bar_widget(
         R"(
@@ -146,9 +204,78 @@ void VideoRenderPlugin::on_exit() {
 }
 
 caf::message_handler VideoRenderPlugin::message_handler_extensions() {
+
+    // makes sure the offscreen viewport exists, then queues the render job
+    auto submit_render =
+        [=](const std::string &render_item_name,
+            const utility::Uuid &parent_playlist_item_id,
+            const utility::Uuid &target_render_item_id,
+            const std::string &output_file_path,
+            const std::string &output_audio_path,
+            const int width_pixels,
+            const int height_pixels,
+            const int in_point,
+            const int out_point,
+            const utility::FrameRate &frame_rate,
+            const bool frame_for_frame,
+            const std::string &video_codec_opts,
+            const std::string &video_render_bit_depth,
+            const std::string &audio_codec_opts,
+            const std::string &video_preset_name,
+            const std::string &ocio_display,
+            const std::string &ocio_view,
+            const bool &auto_check_output,
+            const std::string &timecode,
+            const utility::JsonStore &export_options) -> result<utility::Uuid> {
+        auto rp = make_response_promise<utility::Uuid>();
+        mail(offscreen_viewport_atom_v)
+            .request(caf::actor_cast<caf::actor>(this), infinite)
+            .then(
+                [=](bool) mutable {
+                    try {
+
+                        const auto result = create_render_job(
+                            render_item_name,
+                            parent_playlist_item_id,
+                            target_render_item_id,
+                            output_file_path,
+                            output_audio_path,
+                            Imath::V2i(width_pixels, height_pixels),
+                            in_point,
+                            out_point,
+                            frame_rate,
+                            frame_for_frame,
+                            video_codec_opts,
+                            video_render_bit_depth,
+                            audio_codec_opts,
+                            video_preset_name,
+                            ocio_display,
+                            ocio_view,
+                            auto_check_output,
+                            timecode,
+                            export_options);
+
+                        rp.deliver(result);
+
+                    } catch (std::exception &e) {
+
+                        rp.deliver(make_error(xstudio_error::error, e.what()));
+                    }
+                },
+                [=](caf::error &err) mutable { rp.deliver(err); });
+        return rp;
+    };
+
     return caf::message_handler(
                {[=](utility::user_start_action_atom) {
                     if (current_worker_) {
+                        if (caf::actor_cast<caf::actor>(current_sender()) !=
+                            current_worker_.actor()) {
+                            // A request to start the queue (e.g. several jobs
+                            // were added at once) while a job is running. Let
+                            // it carry on: the next job starts when it is done.
+                            return;
+                        }
                         // cleanup the current worker, which has finished rendering
                         // (or failed)
                         send_exit(current_worker_.actor(), caf::exit_reason::user_shutdown);
@@ -186,13 +313,11 @@ caf::message_handler VideoRenderPlugin::message_handler_extensions() {
                 [=](session::render_to_video_atom,
                     const utility::Uuid &job_id,
                     const bool cancel) -> result<bool> {
-
                     if (cancel) {
                         remove_job(job_id);
                         return true;
                     }
                     return false;
-
                 },
 
                 [=](session::render_to_video_atom,
@@ -215,47 +340,79 @@ caf::message_handler VideoRenderPlugin::message_handler_extensions() {
                     const std::string &ocio_view,
                     const bool &auto_check_output,
                     const std::string &timecode) -> result<utility::Uuid> {
-                    auto rp = make_response_promise<utility::Uuid>();
-                    mail(offscreen_viewport_atom_v)
-                        .request(caf::actor_cast<caf::actor>(this), infinite)
-                        .then(
-                            [=](bool) mutable {
-                                try {
+                    return submit_render(
+                        render_item_name,
+                        parent_playlist_item_id,
+                        target_render_item_id,
+                        output_file_path,
+                        output_audio_path,
+                        width_pixels,
+                        height_pixels,
+                        in_point,
+                        out_point,
+                        frame_rate,
+                        frame_for_frame,
+                        video_codec_opts,
+                        video_render_bit_depth,
+                        audio_codec_opts,
+                        video_preset_name,
+                        ocio_display,
+                        ocio_view,
+                        auto_check_output,
+                        timecode,
+                        utility::JsonStore());
+                },
 
-                                    const auto result = create_render_job(
-                                        render_item_name,
-                                        parent_playlist_item_id,
-                                        target_render_item_id,
-                                        output_file_path,
-                                        output_audio_path,
-                                        Imath::V2i(width_pixels, height_pixels),
-                                        in_point,
-                                        out_point,
-                                        frame_rate,
-                                        frame_for_frame,
-                                        video_codec_opts,
-                                        video_render_bit_depth,
-                                        audio_codec_opts,
-                                        video_preset_name,
-                                        ocio_display,
-                                        ocio_view,
-                                        auto_check_output,
-                                        timecode);
-
-                                    rp.deliver(result);
-
-                                } catch (std::exception &e) {
-
-                                    rp.deliver(make_error(xstudio_error::error, e.what()));
-                                }
-                            },
-                            [=](caf::error &err) mutable { rp.deliver(err); });
-                    return rp;
+                // Same as above with a dict of export options at the end, see
+                // create_render_job. Used by the Python API.
+                [=](session::render_to_video_atom,
+                    const std::string &render_item_name,
+                    const utility::Uuid &parent_playlist_item_id,
+                    const utility::Uuid &target_render_item_id,
+                    const std::string &output_file_path,
+                    const std::string &output_audio_path,
+                    const int width_pixels,
+                    const int height_pixels,
+                    const int in_point,
+                    const int out_point,
+                    const utility::FrameRate &frame_rate,
+                    const bool frame_for_frame,
+                    const std::string &video_codec_opts,
+                    const std::string &video_render_bit_depth,
+                    const std::string &audio_codec_opts,
+                    const std::string &video_preset_name,
+                    const std::string &ocio_display,
+                    const std::string &ocio_view,
+                    const bool &auto_check_output,
+                    const std::string &timecode,
+                    const utility::JsonStore &export_options) -> result<utility::Uuid> {
+                    return submit_render(
+                        render_item_name,
+                        parent_playlist_item_id,
+                        target_render_item_id,
+                        output_file_path,
+                        output_audio_path,
+                        width_pixels,
+                        height_pixels,
+                        in_point,
+                        out_point,
+                        frame_rate,
+                        frame_for_frame,
+                        video_codec_opts,
+                        video_render_bit_depth,
+                        audio_codec_opts,
+                        video_preset_name,
+                        ocio_display,
+                        ocio_view,
+                        auto_check_output,
+                        timecode,
+                        export_options);
                 },
                 [=](broadcast::join_broadcast_atom atom, caf::actor subscriber) {
                     return mail(atom, subscriber).delegate(event_group_);
                 },
-                [=](colour_pipeline::colour_pipeline_atom, const utility::Uuid &container_to_be_rendered_uuid) {
+                [=](colour_pipeline::colour_pipeline_atom,
+                    const utility::Uuid &container_to_be_rendered_uuid) {
                     // this message handler lets us set-up the OCIO display and view
                     // dropdowns to show the appropriate options for the container (
                     // playlist, timeline, contact sheet) with the given uuid.
@@ -313,14 +470,142 @@ void VideoRenderPlugin::menu_item_activated(
     const utility::JsonStore &menu_item_data, const std::string &user_data) {
     // use the hotkey handling that's set-up in PlayheadActor
 
-    if (menu_item_data["uuid"].get<utility::Uuid>() == render_menu_item_ ||
-        menu_item_data["uuid"].get<utility::Uuid>() == render_menu_item2_) {
+    const auto uuid = menu_item_data["uuid"].get<utility::Uuid>();
+    if (uuid == render_menu_item_ || uuid == render_menu_item2_) {
 
         create_qml_item(R"(
             import VideoRenderer 1.0
             VideoRendererDialog {}
             )");
+
+    } else if (uuid == grade_menu_item_ || uuid == grade_menu_item2_) {
+
+        // same dialog, but it starts from the last used export profile with
+        // the grade burnt in
+        create_qml_item(R"(
+            import VideoRenderer 1.0
+            VideoRendererDialog { gradeExport: true }
+            )");
+
+    } else if (uuid == grade_clip_menu_item_) {
+
+        // render the selected clip(s) on their own, one file per clip
+        create_qml_item(R"(
+            import VideoRenderer 1.0
+            VideoRendererDialog { gradeExport: true; clipMode: true }
+            )");
     }
+}
+
+std::map<std::string, std::string> VideoRenderPlugin::naming_tokens(
+    const utility::JsonStore &export_options,
+    const std::string &render_item_name,
+    const Imath::V2i &resolution,
+    const int in_point,
+    const int out_point,
+    const std::string &ocio_display,
+    const std::string &ocio_view) const {
+
+    auto tokens           = export_profiles::clock_tokens(std::chrono::system_clock::now());
+    tokens["media_name"]  = render_item_name;
+    tokens["width"]       = std::to_string(resolution.x);
+    tokens["height"]      = std::to_string(resolution.y);
+    tokens["display"]     = ocio_display;
+    tokens["view"]        = ocio_view;
+    tokens["frame_range"] = (in_point >= 0 && out_point >= 0)
+                                ? fmt::format("{}-{}", in_point, out_point)
+                                : std::string("full");
+    if (export_options.is_object() && export_options.contains("bake_grade") &&
+        export_options["bake_grade"].is_boolean()) {
+        tokens["grade"] = export_options["bake_grade"].get<bool>() ? "graded" : "ungraded";
+    }
+
+    // values given by the caller win (the dialog knows better names and
+    // frame ranges than we do here)
+    if (export_options.is_object() && export_options.contains("tokens") &&
+        export_options["tokens"].is_object()) {
+        for (const auto &item : export_options["tokens"].items()) {
+            if (item.value().is_string())
+                tokens[item.key()] = item.value().get<std::string>();
+            else if (item.value().is_number())
+                tokens[item.key()] = item.value().dump();
+        }
+    }
+    return tokens;
+}
+
+void VideoRenderPlugin::handle_export_profile_action(
+    const std::string &action, const utility::JsonStore &args) {
+
+    // Profile changes made in the dialog. We keep the logic here (and in
+    // export_profiles.cpp) so it is the same for every caller and tested.
+    nlohmann::json profiles =
+        export_profiles::normalise_export_profiles(export_profiles_->value());
+    std::string error;
+
+    if (action == "save_export_profile") {
+
+        if (!export_profiles::save_export_profile(profiles, args)) {
+            error = "Please give the export profile a name.";
+        } else {
+            last_export_profile_->set_value(
+                export_profiles::normalise_export_profile(args)["name"].get<std::string>());
+        }
+
+    } else if (action == "rename_export_profile") {
+
+        const auto old_name = args.value("old_name", std::string());
+        const auto new_name = args.value("new_name", std::string());
+        if (export_profiles::rename_export_profile(profiles, old_name, new_name, error)) {
+            const int idx = export_profiles::find_export_profile(profiles, new_name);
+            if (idx >= 0)
+                last_export_profile_->set_value(profiles[idx]["name"].get<std::string>());
+        }
+
+    } else if (action == "delete_export_profile") {
+
+        const auto name = args.value("name", std::string());
+        if (!export_profiles::delete_export_profile(profiles, name)) {
+            error = fmt::format("There is no export profile called \"{}\".", name);
+        } else if (last_export_profile_->value() == name) {
+            last_export_profile_->set_value("");
+        }
+
+    } else if (action == "select_export_profile") {
+
+        last_export_profile_->set_value(args.value("name", std::string()));
+        return;
+
+    } else if (action == "preview_output_path") {
+
+        // fill in the naming template so the dialog can show where the
+        // render will go
+        const auto path   = args.value("path", std::string());
+        const auto tokens = naming_tokens(
+            args,
+            args.value("media_name", std::string()),
+            Imath::V2i(args.value("width", 0), args.value("height", 0)),
+            args.value("in_point", -1),
+            args.value("out_point", -1),
+            args.value("ocio_display", std::string()),
+            args.value("ocio_view", std::string()));
+
+        utility::JsonStore preview;
+        preview["request"]  = args.value("request", 0);
+        preview["template"] = path;
+        preview["path"]     = export_profiles::expand_naming_template_next_version(
+            path, tokens, export_profiles::output_path_exists);
+        output_path_preview_->set_value(preview);
+        return;
+
+    } else {
+        spdlog::warn("{} unknown action {}", __PRETTY_FUNCTION__, action);
+        return;
+    }
+
+    export_profiles_message_->set_value(error);
+    if (error.empty())
+        export_profiles_->set_value(utility::JsonStore(profiles));
 }
 
 void VideoRenderPlugin::update_ocio_choices(const utility::Uuid &target_render_item_id) {
@@ -417,13 +702,9 @@ void VideoRenderPlugin::update_ocio_choices(const utility::Uuid &target_render_i
                             }
                         },
 
-                        [=](caf::error &err) {
-                            utility::log_caf_error(err);
-                        });
+                        [=](caf::error &err) { utility::log_caf_error(err); });
             },
-            [=](caf::error &err) {
-                utility::log_caf_error(err);
-            });
+            [=](caf::error &err) { utility::log_caf_error(err); });
 }
 
 void VideoRenderPlugin::attribute_changed(const utility::Uuid &attr_uuid, const int role) {
@@ -468,6 +749,25 @@ void VideoRenderPlugin::make_offscreen_viewport(caf::typed_response_promise<bool
         rp.deliver(true);
         return;
     }
+
+    // Several renders can be queued at once (e.g. "Render All" in the
+    // dialog) before the viewport exists. Only make one viewport and answer
+    // all the requests when it is ready.
+    offscreen_viewport_requests_.push_back(rp);
+    if (offscreen_viewport_requests_.size() > 1)
+        return;
+
+    auto deliver_all = [=](const caf::error &err) mutable {
+        auto requests = offscreen_viewport_requests_;
+        offscreen_viewport_requests_.clear();
+        for (auto &r : requests) {
+            if (err)
+                r.deliver(err);
+            else
+                r.deliver(true);
+        }
+    };
+
     // Get the 'StudioUI' which lives in the Qt context and therefore is able to
     // create offscreen viewports for us
     auto studio_ui = system().registry().template get<caf::actor>(studio_ui_registry);
@@ -485,7 +785,6 @@ void VideoRenderPlugin::make_offscreen_viewport(caf::typed_response_promise<bool
                     .request(offscreen_viewport_, infinite)
                     .then(
                         [=](caf::actor colour_pipeline) mutable {
-
                             colour_pipeline_ = colour_pipeline;
 
                             // Turn off the feature in OCIO plugin where it dynamically picks
@@ -497,9 +796,9 @@ void VideoRenderPlugin::make_offscreen_viewport(caf::typed_response_promise<bool
                                 true)
                                 .send(dummy_colour_pipeline_);
 
-                            rp.deliver(true);
+                            deliver_all(caf::error());
                         },
-                        [=](caf::error &err) mutable { rp.deliver(err); });
+                        [=](caf::error &err) mutable { deliver_all(err); });
 
                 // We COULD create this post-render hook class, this will convert
                 // the RGB 16 bit OpenGL framebuffer to RGB 10-10-10 buffer for
@@ -511,7 +810,7 @@ void VideoRenderPlugin::make_offscreen_viewport(caf::typed_response_promise<bool
                 // viewport::ViewportFramePostProcessorPtr frameGrabber(new
                 // RGB10BitFrameGrabber()); anon_mail(frameGrabber).send(offscreen_viewport_);
             },
-            [=](caf::error &err) mutable { rp.deliver(err); });
+            [=](caf::error &err) mutable { deliver_all(err); });
 }
 
 
@@ -540,14 +839,25 @@ utility::JsonStore VideoRenderPlugin::qml_item_callback(
                         [=](caf::actor session) {
                             playback_render_output(path, audio_path, session);
                         },
-                        [=](caf::error &err) {
-                            utility::log_caf_error(err);
-                        });
+                        [=](caf::error &err) { utility::log_caf_error(err); });
             }
 
         } catch (std::exception &e) {
             spdlog::warn("{} {}", __PRETTY_FUNCTION__, e.what());
             return result;
+        }
+        return result;
+
+    } else if (
+        callback_data.is_array() && callback_data.size() == 2 && callback_data[0].is_string() &&
+        callback_data[1].is_object()) {
+
+        // export profile actions: [action, {arguments}]
+        try {
+            handle_export_profile_action(
+                callback_data[0].get<std::string>(), utility::JsonStore(callback_data[1]));
+        } catch (std::exception &e) {
+            spdlog::warn("{} {}", __PRETTY_FUNCTION__, e.what());
         }
         return result;
 
@@ -573,9 +883,11 @@ utility::JsonStore VideoRenderPlugin::qml_item_callback(
         }
         return result;
 
-    } else if (callback_data.is_array() && callback_data.size() == 18) {
+    } else if (
+        callback_data.is_array() && (callback_data.size() == render_args_count ||
+                                     callback_data.size() == render_args_count + 1)) {
 
-        if (!offscreen_viewport_) {
+        if (!offscreen_viewport_ || !colour_pipeline_) {
             // we don't yet have an offscreen viewport ... this needs to be created
             // asynchronously so we ping ourselves a message with the args of this
             // function - we then make the viewport
@@ -594,6 +906,29 @@ utility::JsonStore VideoRenderPlugin::qml_item_callback(
                             "an error occurred setting up the offscreen viewport:");
                     });
             return result;
+        }
+
+        create_render_job_from_qml(callback_data);
+
+    } else {
+
+        spdlog::warn(
+            "{} : callback from qml was passed data that wasn't recognised\n\n{}",
+            __PRETTY_FUNCTION__,
+            callback_data.dump(2));
+    }
+    return result;
+}
+
+void VideoRenderPlugin::create_render_job_from_qml(const utility::JsonStore &callback_data) {
+
+    {
+        // the newer dialog adds a dict of export options as the last value
+        utility::JsonStore args = callback_data;
+        utility::JsonStore export_options;
+        if (args.size() == render_args_count + 1) {
+            export_options = utility::JsonStore(args.back());
+            args.erase(args.end() - 1);
         }
 
         try {
@@ -618,7 +953,7 @@ utility::JsonStore VideoRenderPlugin::qml_item_callback(
             std::string timecode;
 
             unpack_json_array(
-                callback_data,
+                args,
                 render_item_name,
                 parent_playlist_item_id,
                 target_render_item_id,
@@ -658,20 +993,13 @@ utility::JsonStore VideoRenderPlugin::qml_item_callback(
                 ocio_display,
                 ocio_view,
                 auto_check_output,
-                timecode);
+                timecode,
+                export_options);
 
         } catch (std::exception &e) {
             spdlog::warn("{} {}", __PRETTY_FUNCTION__, e.what());
         }
-
-    } else {
-
-        spdlog::warn(
-            "{} : callback from qml was passed data that wasn't recognised\n\n{}",
-            __PRETTY_FUNCTION__,
-            callback_data.dump(2));
     }
-    return result;
 }
 
 void VideoRenderPlugin::playback_render_output(
@@ -688,9 +1016,7 @@ void VideoRenderPlugin::playback_render_output(
             path_to_render, match[1].str(), fmt::format("{{:0{}d}}", n_hash));
     }
 
-    auto handle_error = [=](caf::error &err) {
-        utility::log_caf_error(err);
-    };
+    auto handle_error = [=](caf::error &err) { utility::log_caf_error(err); };
 
     auto add_audio = [=](caf::actor media) {
         mail(media::media_reference_atom_v, media::MT_IMAGE)
@@ -742,10 +1068,9 @@ void VideoRenderPlugin::playback_render_output(
                             .request(session, infinite)
                             .then(do_load, handle_error);
                     } else {
-                        do_load(
-                            utility::UuidUuidActor(
-                                utility::Uuid(),
-                                utility::UuidActor(utility::Uuid(), check_playlist)));
+                        do_load(utility::UuidUuidActor(
+                            utility::Uuid(),
+                            utility::UuidActor(utility::Uuid(), check_playlist)));
                     }
                 },
                 handle_error);
@@ -783,9 +1108,8 @@ void VideoRenderPlugin::update_annotations_visibility_override() {
     std::string action = "CLEAR_VISIBILITY_OVERRIDE";
     if (current_worker_) {
         auto p = job_include_annotations_.find(current_worker_.uuid());
-        action = (p != job_include_annotations_.end() && p->second)
-                     ? "FORCE_SHOW_ANNOTATIONS"
-                     : "FORCE_HIDE_ANNOTATIONS";
+        action = (p != job_include_annotations_.end() && p->second) ? "FORCE_SHOW_ANNOTATIONS"
+                                                                    : "FORCE_HIDE_ANNOTATIONS";
     }
 
     anon_mail(
@@ -814,23 +1138,49 @@ utility::Uuid VideoRenderPlugin::create_render_job(
     const std::string &ocio_display,
     const std::string &ocio_view,
     const bool &auto_check_output,
-    const std::string &timecode) {
+    const std::string &timecode,
+    const utility::JsonStore &export_options) {
 
     // make a worker actor that executes the rendering and sends status
     // updates to the plugin actor (i.e. this class)
     utility::Uuid job_id = utility::Uuid::generate();
 
+    // Output paths may use naming template tokens like {media_name} or
+    // {version}. Fill them in now, so that {version} picks the next version
+    // that is not on disk yet. The audio file gets the same version number.
+    std::string output_path = output_file_path;
+    std::string audio_path  = output_audio_path;
+    if (export_profiles::has_tokens(output_path) || export_profiles::has_tokens(audio_path)) {
+        const auto tokens = naming_tokens(
+            export_options,
+            render_item_name,
+            resolution,
+            in_point,
+            out_point,
+            ocio_display,
+            ocio_view);
+        int version = 1;
+        output_path = export_profiles::expand_naming_template_next_version(
+            output_path, tokens, export_profiles::output_path_exists, &version);
+        audio_path = export_profiles::expand_naming_template(audio_path, tokens, version);
+    }
+
+    if (export_options.is_object() && export_options.contains("profile") &&
+        export_options["profile"].is_string() &&
+        !export_options["profile"].get<std::string>().empty()) {
+        last_export_profile_->set_value(export_options["profile"].get<std::string>());
+    }
+
     // capture the "include annotations" setting at submit time so queued jobs
     // are not affected by later changes to the checkbox
-    job_include_annotations_[job_id] =
-        include_annotations_ && include_annotations_->value();
-    auto worker          = spawn<VideoRenderWorker>(
+    job_include_annotations_[job_id] = include_annotations_ && include_annotations_->value();
+    auto worker                      = spawn<VideoRenderWorker>(
         job_id,
         render_item_name,
         parent_playlist_item_id,
         target_render_item_id,
-        output_file_path,
-        output_audio_path,
+        output_path,
+        audio_path,
         resolution,
         in_point,
         out_point,
@@ -844,6 +1194,7 @@ utility::Uuid VideoRenderPlugin::create_render_job(
         ocio_view,
         auto_check_output,
         timecode,
+        export_options,
         offscreen_viewport_,
         colour_pipeline_,
         caf::actor_cast<caf::actor>(this));

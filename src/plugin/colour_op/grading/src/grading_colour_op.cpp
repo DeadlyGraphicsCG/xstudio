@@ -248,7 +248,17 @@ GradingColourOperator::update_shader_uniforms(const media_reader::ImageBufPtr &i
     uniforms_dict["grade_count"] = 0;
     uniforms_dict["tool_active"] = false;
 
-    if (bypass_) {
+    // The video renderer can set 'video_render_bake_grade' in the colour
+    // settings of its private copy of the media: true applies the grade even
+    // when the viewer's bypass is on, false leaves the grade out of the render.
+    bool bypass               = bypass_;
+    const auto &colour_params = image.frame_id().params();
+    if (colour_params.is_object() && colour_params.contains("video_render_bake_grade") &&
+        colour_params["video_render_bake_grade"].is_boolean()) {
+        bypass = !colour_params["video_render_bake_grade"].get<bool>();
+    }
+
+    if (bypass) {
         return uniforms_dict;
     }
 

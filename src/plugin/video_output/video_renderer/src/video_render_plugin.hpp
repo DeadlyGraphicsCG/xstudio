@@ -36,6 +36,19 @@ class VideoRenderPlugin : public plugin::StandardPlugin {
     void playback_render_output(
         std::string path_to_render, const std::string audio_file, caf::actor session);
 
+    // export profiles and naming templates (see export_profiles.hpp)
+    void
+    handle_export_profile_action(const std::string &action, const utility::JsonStore &args);
+    std::map<std::string, std::string> naming_tokens(
+        const utility::JsonStore &export_options,
+        const std::string &render_item_name,
+        const Imath::V2i &resolution,
+        const int in_point,
+        const int out_point,
+        const std::string &ocio_display,
+        const std::string &ocio_view) const;
+    void create_render_job_from_qml(const utility::JsonStore &callback_data);
+
   protected:
     void attribute_changed(const utility::Uuid &attribute_uuid, const int role) override;
 
@@ -57,11 +70,18 @@ class VideoRenderPlugin : public plugin::StandardPlugin {
         const std::string &ocio_display,
         const std::string &ocio_view,
         const bool &auto_check_output,
-        const std::string &timecode);
+        const std::string &timecode,
+        const utility::JsonStore &export_options = utility::JsonStore());
 
     caf::message_handler message_handler_extensions() override;
     caf::actor offscreen_viewport_, colour_pipeline_, dummy_colour_pipeline_;
+    std::vector<caf::typed_response_promise<bool>> offscreen_viewport_requests_;
     utility ::Uuid render_menu_item_, render_menu_item2_;
+    utility::Uuid grade_menu_item_, grade_menu_item2_, grade_clip_menu_item_;
+    module::JsonAttribute *export_profiles_{nullptr};
+    module::StringAttribute *last_export_profile_{nullptr};
+    module::StringAttribute *export_profiles_message_{nullptr};
+    module::JsonAttribute *output_path_preview_{nullptr};
     module::JsonAttribute *resolutions_;
     module::JsonAttribute *frame_rates_;
     module::JsonAttribute *video_codec_presets_;

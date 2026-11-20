@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+import json
 from xstudio.core import get_playlists_atom, get_playlist_atom, add_playlist_atom, move_container_atom
 from xstudio.core import get_container_atom, create_group_atom, remove_container_atom, path_atom, get_media_atom
 from xstudio.core import rename_container_atom, create_divider_atom, media_rate_atom, playhead_rate_atom
@@ -6,7 +7,7 @@ from xstudio.core import reflag_container_atom, merge_playlist_atom, copy_contai
 from xstudio.core import get_bookmark_atom, save_atom, active_media_container_atom, name_atom
 from xstudio.core import viewport_active_media_container_atom
 from xstudio.core import URI, Uuid, VectorUuid, item_selection_atom, type_atom
-from xstudio.core import render_to_video_atom, get_event_group_atom, event_atom
+from xstudio.core import render_to_video_atom, get_event_group_atom, event_atom, JsonStore
 
 from xstudio.api.session.container import Container, PlaylistTree, PlaylistItem
 from xstudio.api.session.playlist import Playlist
@@ -542,7 +543,12 @@ class Session(Container, NotificationHandler, JsonStoreHandler):
         ocio_display="sRGB",
         ocio_view="Raw",
         timecode="",
-        status_callback=None
+        status_callback=None,
+        bake_grade=None,
+        write_grade_cdl=False,
+        write_grade_lut=False,
+        media=None,
+        naming_tokens=None
         ):
         """Render a playlist, timeline, subset or contact sheet to a quicktime
         or image sequence (jpg, tiff, png etc)
@@ -595,6 +601,23 @@ class Session(Container, NotificationHandler, JsonStoreHandler):
                 changed. The status is provided as a dictionary including a
                 'status' field which is set to 'Complete' when the job is
                 finished successfully.
+            bake_grade(bool): True to burn the xSTUDIO grade layers into the
+                render (even if grades are bypassed in the viewer). False to
+                leave the grade out of the render. None (default) keeps the
+                previous behaviour: the render follows the viewer's grade
+                bypass setting.
+            write_grade_cdl(bool): Only used when bake_grade is False. Write
+                the grade next to the render as an ASC CDL collection (.ccc).
+            write_grade_lut(bool): Only used when bake_grade is False. Write
+                the grade next to the render as a 3D LUT (.cube) that works on
+                images in the OCIO config's compositing_log colour space.
+            media(list(Media)): Only render these clips of a playlist or
+                subset (in playlist order). Defaults to all media.
+            naming_tokens(dict): Values for naming template tokens used in
+                output_file_path, e.g. {"media_name": "sh010"}. Tokens like
+                {date}, {time}, {version} (next free v001, v002 ...),
+                {width}, {height}, {display}, {view} and {grade} are filled in
+                automatically. {media_name} defaults to the container name.
 
         Returns:
             job_id(Uuid): the uuid of the render job. Tjhis
@@ -615,6 +638,18 @@ class Session(Container, NotificationHandler, JsonStoreHandler):
             in_frame = 0
         if isinstance(container, Timeline) and out_frame == -1:
             out_frame = container.trimmed_range.frame_duration().frames()
+
+        export_options = {
+            "sidecar_cdl": bool(write_grade_cdl),
+            "sidecar_lut": bool(write_grade_lut),
+            "tokens": dict(naming_tokens) if naming_tokens else {}
+        }
+        if bake_grade is not None:
+            export_options["bake_grade"] = bool(bake_grade)
+        if media:
+            export_options["media_filter"] = [str(m.uuid) for m in media]
+        export_options_js = JsonStore()
+        export_options_js.parse_string(json.dumps(export_options))
 
         job_id = self.connection.request_receive(
             vid_renderer,
@@ -637,7 +672,8 @@ class Session(Container, NotificationHandler, JsonStoreHandler):
             ocio_display,
             ocio_view,
             auto_check_output,
-            timecode)[0]
+            timecode,
+            export_options_js)[0]
 
         # A callback has be passed in ... we need to subscribe to messages from
         # the video renderer plugin which will ping us when the render is complete
