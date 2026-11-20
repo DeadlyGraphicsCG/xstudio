@@ -2,6 +2,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtCore
 
 import xstudio.qml.models 1.0
 import xStudio 1.0
@@ -10,9 +11,9 @@ import "."
 XsWindow {
 
 	id: dialog
-	minimumWidth: 520
-	minimumHeight: 900
-    width: 620
+	minimumWidth: 640
+	minimumHeight: 860
+    width: 700
     title: clipMode ? "Export Clip with Grade" : (gradeExport ? "Export with Grade" : "Render Video")
 
     flags: Qt.platform.os === "windows" ? Qt.Window : Qt.Dialog
@@ -379,7 +380,7 @@ XsWindow {
         initialProfileDone = true
         var idx = profile_names.indexOf(last_export_profile)
         if (idx == -1) idx = 0
-        Qt.callLater(applyProfileByName, profile_names[idx])
+        applyProfileByName(profile_names[idx])
     }
 
     Component.onCompleted: {
@@ -392,7 +393,14 @@ XsWindow {
     onProfile_namesChanged: {
         applyInitialProfile()
         // keep the combo box on the chosen profile when the list changes
-        if (ready) profile_combo.currentIndex = profile_names.indexOf(currentProfileName)
+        // (after the combo box has taken the new list, which resets it)
+        if (ready) sync_profile_combo.restart()
+    }
+    // a Timer rather than Qt.callLater, so nothing runs after the dialog is gone
+    Timer {
+        id: sync_profile_combo
+        interval: 0
+        onTriggered: profile_combo.currentIndex = profile_names.indexOf(currentProfileName)
     }
 
     function profileByName(name) {
@@ -420,6 +428,10 @@ XsWindow {
         if (!folder) {
             var d = "" + file_functions.defaultSessionFolder()
             folder = d.startsWith("file:") ? helpers.pathFromURL(d) : d
+        }
+        if (!folder) {
+            // the user's Videos folder (or home) rather than a relative path
+            folder = helpers.pathFromURL(StandardPaths.writableLocation(StandardPaths.MoviesLocation))
         }
         var name = p.naming_template ? p.naming_template : "{media_name}_{version}"
         var ext = p.container ? ("" + p.container).replace(/^\./, "").toLowerCase() : "mov"
@@ -657,7 +669,7 @@ XsWindow {
     onIsFrameBasedChanged: {
         if (isFrameBased) {
             const re3 = /(.+)(\#+)(.*)(\..+)$/
-            const with_hashes = path.match(re3)
+            const with_hashes = outputFile.text.match(re3)
             if (with_hashes) {
                 outputAudioFile.text = with_hashes[1] + with_hashes[3] + ".aiff"
             }
