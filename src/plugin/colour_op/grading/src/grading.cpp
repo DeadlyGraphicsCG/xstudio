@@ -1315,7 +1315,7 @@ void GradingTool::create_bookmark() {
 
         refresh_ui_from_current_grade();
 
-        // keep colour profile layers placed 'above' at the top of the list
+        // keep colour profile layers placed 'above' at the end of the layer list
         grade_stack_restack_above_layers(current_media_actor_);
     }
 

@@ -218,9 +218,22 @@ void GradingTool::grade_stack_refresh_profiles() {
 std::vector<gs::ExistingLayer>
 GradingTool::grade_stack_existing_layers(const caf::actor &media_actor) {
 
+    // All grade layers on the media, including brand new ones that have no
+    // grade data saved yet (media_actor_grading_bookmarks skips those).
+    utility::UuidList bookmarks;
+    scoped_actor sys{system()};
+    try {
+        bookmarks = utility::request_receive<utility::UuidList>(
+            *sys, media_actor, bookmark::get_bookmarks_atom_v);
+    } catch (const std::exception &e) {
+        spdlog::warn("{} {}", __PRETTY_FUNCTION__, e.what());
+    }
+
     std::vector<gs::ExistingLayer> result;
-    for (const auto &uuid : media_actor_grading_bookmarks(media_actor)) {
+    for (const auto &uuid : bookmarks) {
         const auto detail = get_bookmark_detail(uuid);
+        if (detail.user_type_.value_or("") != "Grading")
+            continue;
         result.push_back({uuid, detail.user_data_, detail.created_});
     }
     return result;
@@ -673,7 +686,7 @@ void GradingTool::grade_stack_delete(const utility::JsonStore &args) {
 void GradingTool::grade_stack_restack_above_layers(const caf::actor &media_actor) {
 
     // Profile layers placed 'above' are always applied last. Keep them at
-    // the top of the layer list too when a new shot layer is added (the list
+    // the end of the layer list too when a new shot layer is added (the list
     // sorts by created time).
     if (!media_actor)
         return;
