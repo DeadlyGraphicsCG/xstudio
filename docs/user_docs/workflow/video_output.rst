@@ -100,6 +100,40 @@ Render Output Settings
 
     xSTUDIO has the ability for different media items to have different OCIO configs applied but this is generally only applicable to Studios that have set-up pipeline integration plugins that inject the necessary colour managmenet metadata. In the case where you have a Playlist containing media items that have different OCIO configs attached then the Display setting will generally be respected as long as the Display that was selected is valid for the given OCIO config. For a given media item the View setting will then default to the corresponding View setting in the main xSTUDIO interface that you have when the same media item is on-screen.
 
+Export with Grade and Export Profiles
+-------------------------------------
+
+xSTUDIO grades (the layers you make in the Grading panel) can be burnt into a render, or left out and written next to the render as standard grade files. Settings you use often can be saved as named **export profiles**.
+
+There are three ways into this:
+
+    - *File->Export->Export with Grade ...* and *Export->Export with Grade ...* in the Playlists context menu open the render dialog for the selected Playlist, Subset, Contact Sheet or Sequence, starting from the export profile you used last.
+    - *Export->Export Clip with Grade ...* in the media list context menu renders each selected clip on its own, one file per clip. The **Render All** button renders all of them in one go (put **{media_name}** in the output file name so each clip gets its own file).
+    - The normal *Render ...* dialog has the same settings.
+
+.. topic:: Export Profile
+
+    Pick a profile to fill in the dialog: encoding preset, container (file extension), resolution, frame rate, OCIO display and view, grade settings, output folder, file naming template, annotations and audio. **Save** stores the current dialog settings into the chosen profile, **Save As ...** makes a new one, **Rename ...** and **Delete** do what they say. Profiles are kept in your user preferences, so they are still there the next time you start xSTUDIO. Empty fields in a profile (for example no OCIO display) mean "keep what the dialog already shows".
+
+.. topic:: File naming tokens
+
+    The output file path can contain tokens in curly brackets that are filled in when the render is queued. A line under the output file shows the path that will be written. Available tokens: **{media_name}** (clip, playlist or sequence name), **{playlist}**, **{date}** (YYYYMMDD), **{time}** (HHMMSS), **{year}**, **{version}** (v001, v002 ... the first version that does not exist on disk yet), **{frame_range}**, **{profile}**, **{grade}** (graded or ungraded), **{width}**, **{height}**, **{display}** and **{view}**. Folders in the path that do not exist yet are created.
+
+.. topic:: Burn In Grade
+
+    When ticked, the active grade layers are applied to the rendered pixels, even if grades are bypassed in the viewer at the time. When not ticked, the render has no xSTUDIO grade at all. Grade layers that are switched off in the Grading panel are never rendered.
+
+.. topic:: Grade Files
+
+    Only available when the grade is not burnt in. When the render has finished, the grade is written next to it with the same name:
+
+    - **CDL (.ccc):** an ASC CDL collection with one colour correction per grade layer and clip. Exposure is folded into the slope. Contrast and masks can't be stored in a CDL; the render log lists any layer that is affected.
+    - **LUT (.cube):** a 33 point 3D LUT with the whole grade of a clip (all layers, including exposure and contrast, but no masks). It works on images in the *compositing_log* colour space of the clip's OCIO config, in and out, which is the space xSTUDIO uses for log grades. When several clips are rendered, each gets its own LUT named after the clip.
+
+.. topic:: Python
+
+    *Session.render_container()* has the same options: *bake_grade*, *write_grade_cdl*, *write_grade_lut*, *media* (only render some clips of a playlist) and *naming_tokens*.
+
 Executing, Monitoring and Checking a Render
 -------------------------------------------
 
