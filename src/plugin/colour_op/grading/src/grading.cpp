@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#include <chrono>
 #include <limits>
+#include <set>
 #include <filesystem>
 
 #include <caf/actor_registry.hpp>
@@ -17,6 +19,7 @@
 #include "grading_mask_render_data.h"
 #include "grading_mask_gl_renderer.h"
 #include "grading_colour_op.hpp"
+#include "grading_working_space.h"
 
 using namespace xstudio;
 using namespace xstudio::bookmark;
@@ -38,6 +41,25 @@ std::vector<float> array4d_to_vector4f(const std::array<double, 4> &arr) {
 std::array<double, 4> vector4f_to_array4d(const std::vector<float> &vec) {
     return std::array<double, 4>{vec[0], vec[1], vec[2], vec[3]};
 }
+
+std::vector<float> array3d_to_vector3f(const std::array<double, 3> &arr) {
+    return std::vector<float>{
+        static_cast<float>(arr[0]), static_cast<float>(arr[1]), static_cast<float>(arr[2])};
+}
+
+std::array<double, 3>
+vector3f_to_array3d(const std::vector<float> &vec, const std::array<double, 3> &fallback) {
+    if (vec.size() < 3)
+        return fallback;
+    return std::array<double, 3>{vec[0], vec[1], vec[2]};
+}
+
+// Title of the viewer channel attribute of the OCIO colour pipeline plugin
+const std::string VIEWER_CHANNEL_ATTR("Channel");
+
+// A viewport that has not shown any image for this long is no longer
+// followed by the channel check buttons of the grading panel.
+const auto ACTIVE_VIEWPORT_TIMEOUT = std::chrono::seconds(2);
 
 } // anonymous namespace
 
@@ -132,6 +154,48 @@ GradingTool::GradingTool(caf::actor_config &cfg, const utility::JsonStore &init_
     contrast_->set_role_data(module::Attribute::DefaultValue, 1.0f);
     contrast_->expose_in_ui_attrs_group("grading_settings");
     contrast_->expose_in_ui_attrs_group("grading_sliders");
+
+    // Per channel [R, G, B] trims. They are combined with the master values
+    // above: exposure trims are added (stops), contrast and saturation trims
+    // are multiplied. They are not in "grading_sliders" (no slider of their
+    // own), the slider column of the matching master value shows them.
+
+    saturation_rgb_ = add_float_vector_attribute(
+        "Saturation RGB",
+        "Sat. RGB",
+        std::vector<float>({1.0, 1.0, 1.0}),      // initial value
+        std::vector<float>({0.0, 0.0, 0.0}),      // min
+        std::vector<float>({4.0, 4.0, 4.0}),      // max
+        std::vector<float>({0.005, 0.005, 0.005}) // step
+    );
+    saturation_rgb_->set_redraw_viewport_on_change(true);
+    saturation_rgb_->expose_in_ui_attrs_group("grading_settings");
+
+    exposure_rgb_ = add_float_vector_attribute(
+        "Exposure RGB",
+        "Exp. RGB",
+        std::vector<float>({0.0, 0.0, 0.0}),    // initial value
+        std::vector<float>({-8.0, -8.0, -8.0}), // min
+        std::vector<float>({8.0, 8.0, 8.0}),    // max
+        std::vector<float>({0.01, 0.01, 0.01})  // step
+    );
+    exposure_rgb_->set_redraw_viewport_on_change(true);
+    exposure_rgb_->expose_in_ui_attrs_group("grading_settings");
+
+    contrast_rgb_ = add_float_vector_attribute(
+        "Contrast RGB",
+        "Cont. RGB",
+        std::vector<float>({1.0, 1.0, 1.0}),       // initial value
+        std::vector<float>({0.001, 0.001, 0.001}), // min
+        std::vector<float>({4.0, 4.0, 4.0}),       // max
+        std::vector<float>({0.005, 0.005, 0.005})  // step
+    );
+    contrast_rgb_->set_redraw_viewport_on_change(true);
+    contrast_rgb_->expose_in_ui_attrs_group("grading_settings");
+
+    // The viewport whose channel mode the grading panel shows and changes
+    active_viewport_ = add_string_attribute("active_viewport", "active_viewport", "");
+    active_viewport_->expose_in_ui_attrs_group("grading_settings");
 
     // Masking elements
 
@@ -300,6 +364,20 @@ void GradingTool::images_going_on_screen(
         return;
     }
 
+    // Follow the viewport that is showing images, for the channel check
+    // buttons. Only switch when the current one has stopped showing images,
+    // so that two visible viewports do not make us flip between them.
+    if (images) {
+        const auto now                     = utility::clock::now();
+        viewport_last_seen_[viewport_name] = now;
+        const std::string active           = active_viewport_->value();
+        if (active != viewport_name &&
+            (active.empty() || !viewport_last_seen_.count(active) ||
+             now - viewport_last_seen_[active] > ACTIVE_VIEWPORT_TIMEOUT)) {
+            active_viewport_->set_value(viewport_name);
+        }
+    }
+
     // Make sure we have the latest images on screen, this is used for grading
     // layers copy / pasting as the below doesn't refresh when grade values within
     // a layer are updated.
@@ -360,6 +438,18 @@ void GradingTool::on_screen_media_changed(
     working_space_->set_value(working_space);
     media_colour_managed_->set_value(!is_unmanaged);
 
+    // Working spaces a grade layer can use, from the OCIO config of the media
+    config_working_spaces_.clear();
+    if (!is_unmanaged) {
+        try {
+            config_working_spaces_ =
+                grading::working_space_choices(grading::ocio_config(colour_params));
+        } catch (const std::exception &e) {
+            spdlog::warn("{} {}", __PRETTY_FUNCTION__, e.what());
+        }
+    }
+    update_colour_space_choices();
+
     current_media_actor_ = media_actor;
 
     // Restore previous bookmark selection, if any
@@ -371,9 +461,7 @@ void GradingTool::on_screen_media_changed(
                 current_media_uuid_                     = media_uuid;
                 select_bookmark_on_media_changed(previous_media_uuid, current_media_uuid_);
             },
-            [=](const caf::error &err) {
-                utility::log_caf_error(err);
-            });
+            [=](const caf::error &err) { utility::log_caf_error(err); });
 }
 
 void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const int role) {
@@ -457,6 +545,26 @@ void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const i
                     }
                 }
             }
+
+        } else if (utility::starts_with(grading_action_->value(), "Rename Layer|")) {
+
+            // "Rename Layer|<bookmark uuid>|<new name>" (the name may contain '|')
+            const std::string payload =
+                grading_action_->value().substr(std::string("Rename Layer|").size());
+            const auto sep = payload.find('|');
+            if (sep != std::string::npos) {
+                rename_layer(utility::Uuid(payload.substr(0, sep)), payload.substr(sep + 1));
+            }
+
+        } else if (utility::starts_with(grading_action_->value(), "Toggle Channel ")) {
+
+            set_viewer_channel(
+                grading_action_->value().substr(std::string("Toggle Channel ").size()), true);
+
+        } else if (utility::starts_with(grading_action_->value(), "Channel ")) {
+
+            set_viewer_channel(
+                grading_action_->value().substr(std::string("Channel ").size()), false);
 
         } else if (grading_action_->value() == "Add CC") {
 
@@ -616,7 +724,9 @@ void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const i
     } else if (
         attribute_uuid == slope_->uuid() || attribute_uuid == offset_->uuid() ||
         attribute_uuid == power_->uuid() || attribute_uuid == saturation_->uuid() ||
-        attribute_uuid == exposure_->uuid() || attribute_uuid == contrast_->uuid()) {
+        attribute_uuid == exposure_->uuid() || attribute_uuid == contrast_->uuid() ||
+        attribute_uuid == saturation_rgb_->uuid() || attribute_uuid == exposure_rgb_->uuid() ||
+        attribute_uuid == contrast_rgb_->uuid()) {
 
         refresh_current_grade_from_ui();
         create_bookmark_if_empty();
@@ -980,6 +1090,12 @@ void GradingTool::clear_grade() {
     saturation_->set_value(saturation_->get_role_data<float>(module::Attribute::DefaultValue));
     exposure_->set_value(exposure_->get_role_data<float>(module::Attribute::DefaultValue));
     contrast_->set_value(contrast_->get_role_data<float>(module::Attribute::DefaultValue));
+    saturation_rgb_->set_value(
+        saturation_rgb_->get_role_data<std::vector<float>>(module::Attribute::DefaultValue));
+    exposure_rgb_->set_value(
+        exposure_rgb_->get_role_data<std::vector<float>>(module::Attribute::DefaultValue));
+    contrast_rgb_->set_value(
+        contrast_rgb_->get_role_data<std::vector<float>>(module::Attribute::DefaultValue));
 }
 
 void GradingTool::save_cdl(const std::string &filepath, const GradingData &grading_data) const {
@@ -988,10 +1104,13 @@ void GradingTool::save_cdl(const std::string &filepath, const GradingData &gradi
 
     OCIO::CDLTransformRcPtr cdl = OCIO::CDLTransform::Create();
 
+    // Exposure (master + per channel) folds into the CDL slope. Contrast and
+    // per channel saturation have no CDL equivalent and are not exported.
+    const auto exposure = grade.effective_exposure();
     std::array<double, 3> slope{
-        grade.slope[0] * grade.slope[3] * std::pow(2.f, grade.exposure),
-        grade.slope[1] * grade.slope[3] * std::pow(2.f, grade.exposure),
-        grade.slope[2] * grade.slope[3] * std::pow(2.f, grade.exposure)};
+        grade.slope[0] * grade.slope[3] * std::pow(2.0, exposure[0]),
+        grade.slope[1] * grade.slope[3] * std::pow(2.0, exposure[1]),
+        grade.slope[2] * grade.slope[3] * std::pow(2.0, exposure[2])};
 
     std::array<double, 3> offset{
         grade.offset[0] + grade.offset[3],
@@ -1047,6 +1166,10 @@ void GradingTool::refresh_current_grade_from_ui() {
     grade.exposure = exposure_->value();
     grade.contrast = contrast_->value();
 
+    grade.sat_rgb      = vector3f_to_array3d(saturation_rgb_->value(), grade.sat_rgb);
+    grade.exposure_rgb = vector3f_to_array3d(exposure_rgb_->value(), grade.exposure_rgb);
+    grade.contrast_rgb = vector3f_to_array3d(contrast_rgb_->value(), grade.contrast_rgb);
+
     grading_data_.set_colour_space(colour_space_->value());
     grading_data_.set_mask_editing(display_mode_attribute_->value() == "Mask");
 }
@@ -1062,7 +1185,12 @@ void GradingTool::refresh_ui_from_current_grade() {
     exposure_->set_value(float(grade.exposure), false);
     contrast_->set_value(float(grade.contrast), false);
 
+    saturation_rgb_->set_value(array3d_to_vector3f(grade.sat_rgb), false);
+    exposure_rgb_->set_value(array3d_to_vector3f(grade.exposure_rgb), false);
+    contrast_rgb_->set_value(array3d_to_vector3f(grade.contrast_rgb), false);
+
     colour_space_->set_value(grading_data_.colour_space(), false);
+    update_colour_space_choices();
     display_mode_attribute_->set_value(grading_data_.mask_editing() ? "Mask" : "Grade", false);
 
     // Initialize shapes overlay
@@ -1325,7 +1453,13 @@ void GradingTool::copy_bookmark_on_media(
     user_data["grade_active"]         = from_user_data.get_or("grade_active", true);
     user_data["mask_active"]          = from_user_data.get_or("mask_active", false);
     user_data["layer_name"]           = "Grade Layer " + std::to_string(layerno + 1);
-    bmd.user_data_                    = user_data;
+
+    // A layer the user has named keeps its name when copied
+    const auto *from_grading_data = dynamic_cast<const GradingData *>(from->annotation_.get());
+    if (from_grading_data && !from_grading_data->layer_name().empty()) {
+        user_data["layer_name"] = from_grading_data->layer_name();
+    }
+    bmd.user_data_ = user_data;
 
     const bool full_clip = from->detail_.duration_ == timebase::k_flicks_max;
 
@@ -1428,6 +1562,141 @@ void GradingTool::remove_bookmark() {
         auto bm = current_bookmark();
         select_bookmark(utility::Uuid());
         StandardPlugin::remove_bookmark(bm);
+    }
+}
+
+void GradingTool::rename_layer(const utility::Uuid &bookmark_uuid, const std::string &name) {
+
+    std::string clean_name = utility::trim(name);
+    if (!bookmark_uuid || clean_name.empty()) {
+        return;
+    }
+
+    // Keep names to a sensible length for the UI and CDL file names
+    constexpr size_t max_name_length = 128;
+    if (clean_name.size() > max_name_length) {
+        clean_name.resize(max_name_length);
+    }
+
+    // 1. Store the name with the grade itself, so it is saved and restored
+    // with the session and travels with the grade data.
+    if (bookmark_uuid == grading_data_.bookmark_uuid_ && bookmark_uuid == current_bookmark()) {
+
+        grading_data_.set_layer_name(clean_name);
+        save_bookmark();
+
+    } else {
+
+        auto annotation   = get_bookmark_annotation(bookmark_uuid);
+        auto grading_data = dynamic_cast<const GradingData *>(annotation.get());
+        if (!grading_data) {
+            return;
+        }
+
+        GradingData renamed(*grading_data);
+        renamed.set_layer_name(clean_name);
+        StandardPlugin::update_bookmark_annotation(
+            bookmark_uuid, std::make_shared<GradingData>(renamed), false);
+    }
+
+    // 2. Mirror it to the bookmark user data, which is what the layer list in
+    // the grading panel (and the CDL export file names) use.
+    auto bmd                     = get_bookmark_detail(bookmark_uuid);
+    utility::JsonStore user_data = bmd.user_data_.value_or(utility::JsonStore());
+    user_data["layer_name"]      = clean_name;
+    bmd.user_data_               = user_data;
+    update_bookmark_detail(bookmark_uuid, bmd);
+}
+
+void GradingTool::set_viewer_channel(const std::string &channel, const bool toggle) {
+
+    static const std::set<std::string> valid_channels{"RGB", "Red", "Green", "Blue"};
+    if (!valid_channels.count(channel)) {
+        spdlog::warn("{} unknown channel '{}'", __PRETTY_FUNCTION__, channel);
+        return;
+    }
+
+    auto colour_pipe_manager =
+        system().registry().template get<caf::actor>(colour_pipeline_registry);
+    if (!colour_pipe_manager || viewport_last_seen_.empty()) {
+        return;
+    }
+
+    // All the viewports we have seen get the same channel mode, so the
+    // check stays consistent if the user switches between viewers.
+    std::vector<std::string> viewports;
+    for (const auto &p : viewport_last_seen_) {
+        viewports.push_back(p.first);
+    }
+    const std::string active =
+        active_viewport_->value().empty() ? viewports.front() : active_viewport_->value();
+
+    auto apply = [=](const std::string &target) {
+        for (const auto &viewport_name : viewports) {
+            mail(colour_pipeline::colour_pipeline_atom_v, viewport_name)
+                .request(colour_pipe_manager, infinite)
+                .then(
+                    [=](caf::actor colour_pipe) {
+                        if (colour_pipe) {
+                            anon_mail(
+                                module::change_attribute_value_atom_v,
+                                VIEWER_CHANNEL_ATTR,
+                                utility::JsonStore(target),
+                                true)
+                                .send(colour_pipe);
+                        }
+                    },
+                    [=](const caf::error &err) { utility::log_caf_error(err); });
+        }
+    };
+
+    if (!toggle || channel == "RGB") {
+        apply(channel);
+        return;
+    }
+
+    // Toggle: go back to RGB if the active viewer already shows that channel
+    mail(colour_pipeline::colour_pipeline_atom_v, active)
+        .request(colour_pipe_manager, infinite)
+        .then(
+            [=](caf::actor colour_pipe) {
+                if (!colour_pipe) {
+                    apply(channel);
+                    return;
+                }
+                mail(module::attribute_value_atom_v, VIEWER_CHANNEL_ATTR)
+                    .request(colour_pipe, infinite)
+                    .then(
+                        [=](const utility::JsonStore &current) {
+                            const bool already_shown =
+                                current.is_string() && current.get<std::string>() == channel;
+                            apply(already_shown ? std::string("RGB") : channel);
+                        },
+                        [=](const caf::error &) { apply(channel); });
+            },
+            [=](const caf::error &err) { utility::log_caf_error(err); });
+}
+
+void GradingTool::update_colour_space_choices() {
+
+    std::vector<std::string> choices = config_working_spaces_;
+
+    // Always offer the default space (no conversion), even for configs that
+    // don't define the scene_linear role.
+    if (std::find(choices.begin(), choices.end(), "scene_linear") == choices.end()) {
+        choices.insert(choices.begin(), "scene_linear");
+    }
+
+    // The current layer may use a space the config does not list (e.g. a
+    // grade made with another config). Keep it visible so it can be seen.
+    const std::string current = colour_space_->value();
+    if (!current.empty() &&
+        std::find(choices.begin(), choices.end(), current) == choices.end()) {
+        choices.push_back(current);
+    }
+
+    if (choices != colour_space_->options()) {
+        colour_space_->set_role_data(module::Attribute::StringChoices, choices, false);
     }
 }
 

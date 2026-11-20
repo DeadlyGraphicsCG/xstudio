@@ -169,11 +169,23 @@ Item { id: wheelItem
                         valueText: value[3].toFixed(3)
                         indicatorColor: "transparent"
 
-                        onEdited:{
+                        scrubEnabled: true
+                        scrubValue: value[3]
+                        scrubMin: float_scrub_min[3]
+                        scrubMax: float_scrub_max[3]
+                        scrubStep: (float_scrub_max[3] - float_scrub_min[3]) / 800
+                        toolTipText: "Drag left / right to change (Shift: fine, Ctrl: coarse). Double-click to reset."
+
+                        function setMaster(newValue) {
+                            if (isNaN(newValue)) return
                             var _value = value
-                            _value[3] = parseFloat(currentText)
+                            _value[3] = newValue
                             value = _value
                         }
+
+                        onScrubbed: (newValue) => setMaster(newValue)
+                        onResetRequested: setMaster(default_value[3])
+                        onEdited: setMaster(parseFloat(currentText))
                     }
                 }
 

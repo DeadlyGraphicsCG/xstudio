@@ -123,6 +123,11 @@ Item { id: dialog
                         Layout.preferredHeight: btnHeight
                     }
                 }
+                Sec4LayerSettings{
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: btnHeight
+                    Layout.maximumHeight: btnHeight
+                }
                 RowLayout{
                     Layout.fillWidth: true
                     Layout.fillHeight: true

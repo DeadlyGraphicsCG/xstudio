@@ -104,6 +104,13 @@ Item {
             }
         }
 
+        // Double-click resets to the default value, like the value fields.
+        // DragThreshold keeps normal slider dragging working.
+        TapHandler {
+            gesturePolicy: TapHandler.DragThreshold
+            onDoubleTapped: root.setValue(root.default_backend_value)
+        }
+
     }
 
 }

@@ -10,102 +10,122 @@
 
 namespace xstudio::ui::viewport {
 
-    struct Grade {
-        std::array<double, 4> slope  {1.0, 1.0, 1.0, 1.0};
-        std::array<double, 4> offset {0.0, 0.0, 0.0, 0.0};
-        std::array<double, 4> power  {1.0, 1.0, 1.0, 1.0};
-        double sat {1.0};
-        double exposure {0.0};
-        double contrast {1.0};
+struct Grade {
+    std::array<double, 4> slope{1.0, 1.0, 1.0, 1.0};
+    std::array<double, 4> offset{0.0, 0.0, 0.0, 0.0};
+    std::array<double, 4> power{1.0, 1.0, 1.0, 1.0};
+    double sat{1.0};
+    double exposure{0.0};
+    double contrast{1.0};
 
-        bool operator==(const Grade &o) const {
-            return (
-                slope == o.slope &&
-                offset == o.offset &&
-                power == o.power &&
-                sat == o.sat &&
-                exposure == o.exposure &&
-                contrast == o.contrast
-            );
-        }
-    };
+    // Optional per channel (R, G, B) trims, applied on top of the master
+    // values above. exposure_rgb is added to exposure (in stops), while
+    // contrast_rgb and sat_rgb are multiplied with contrast and sat. The
+    // defaults change nothing, so grades saved before these fields existed
+    // look exactly the same.
+    std::array<double, 3> exposure_rgb{0.0, 0.0, 0.0};
+    std::array<double, 3> contrast_rgb{1.0, 1.0, 1.0};
+    std::array<double, 3> sat_rgb{1.0, 1.0, 1.0};
 
-    void from_json(const nlohmann::json &j, Grade &g);
-    void to_json(nlohmann::json &j, const Grade &g);
+    // Final value per channel (master combined with the per channel trim).
+    [[nodiscard]] std::array<double, 3> effective_exposure() const;
+    [[nodiscard]] std::array<double, 3> effective_contrast() const;
+    [[nodiscard]] std::array<double, 3> effective_sat() const;
 
-    class GradingData : public bookmark::AnnotationBase {
-      public:
-        GradingData() = default;
-        GradingData(const utility::JsonStore &s);
-        GradingData(const GradingData &o) : AnnotationBase(),
-            colour_space_(o.colour_space_),
-            grade_(o.grade_),
-            mask_active_(o.mask_active_),
-            mask_editing_(o.mask_editing_),
-            mask_(o.mask_) {
-                bookmark_uuid_ = o.bookmark_uuid_;
-            }
+    // True when any per channel trim differs from its default.
+    [[nodiscard]] bool has_per_channel_values() const;
 
-        GradingData & operator=(const GradingData &o) {
-            colour_space_ = o.colour_space_;
-            grade_ = o.grade_;
-            mask_active_ = o.mask_active_;
-            mask_editing_ = o.mask_editing_;
-            mask_ = o.mask_;
-            bookmark_uuid_ = o.bookmark_uuid_;
-            return *this;
-        }
+    bool operator==(const Grade &o) const {
+        return (
+            slope == o.slope && offset == o.offset && power == o.power && sat == o.sat &&
+            exposure == o.exposure && contrast == o.contrast &&
+            exposure_rgb == o.exposure_rgb && contrast_rgb == o.contrast_rgb &&
+            sat_rgb == o.sat_rgb);
+    }
+};
 
-        bool operator==(const GradingData &o) const {
-            return (
-                colour_space_ == o.colour_space_ &&
-                grade_ == o.grade_ &&
-                mask_active_ == o.mask_active_ &&
-                mask_editing_ == o.mask_editing_ &&
-                mask_ == o.mask_
-            );
-        }
+void from_json(const nlohmann::json &j, Grade &g);
+void to_json(nlohmann::json &j, const Grade &g);
 
-        [[nodiscard]] utility::JsonStore serialise(utility::Uuid &plugin_uuid) const override;
+class GradingData : public bookmark::AnnotationBase {
+  public:
+    GradingData() = default;
+    GradingData(const utility::JsonStore &s);
+    GradingData(const GradingData &o)
+        : AnnotationBase(),
+          colour_space_(o.colour_space_),
+          layer_name_(o.layer_name_),
+          grade_(o.grade_),
+          mask_active_(o.mask_active_),
+          mask_editing_(o.mask_editing_),
+          mask_(o.mask_) {
+        bookmark_uuid_ = o.bookmark_uuid_;
+    }
 
-        bool identity() const;
+    GradingData &operator=(const GradingData &o) {
+        colour_space_  = o.colour_space_;
+        layer_name_    = o.layer_name_;
+        grade_         = o.grade_;
+        mask_active_   = o.mask_active_;
+        mask_editing_  = o.mask_editing_;
+        mask_          = o.mask_;
+        bookmark_uuid_ = o.bookmark_uuid_;
+        return *this;
+    }
 
-        void set_colour_space(const std::string &val) { colour_space_ = val; }
-        std::string colour_space() const { return colour_space_; }
+    bool operator==(const GradingData &o) const {
+        return (
+            colour_space_ == o.colour_space_ && layer_name_ == o.layer_name_ &&
+            grade_ == o.grade_ && mask_active_ == o.mask_active_ &&
+            mask_editing_ == o.mask_editing_ && mask_ == o.mask_);
+    }
 
-        Grade & grade() { return grade_; }
-        const Grade & grade() const { return grade_; }
+    [[nodiscard]] utility::JsonStore serialise(utility::Uuid &plugin_uuid) const override;
 
-        void set_mask_active(bool val) { mask_active_ = val; }
-        bool mask_active() const { return mask_active_; }
+    bool identity() const;
 
-        void set_mask_editing(bool val) { mask_editing_ = val; }
-        bool mask_editing() const { return mask_editing_; }
+    void set_colour_space(const std::string &val) { colour_space_ = val; }
+    std::string colour_space() const { return colour_space_; }
 
-        canvas::Canvas & mask() { return mask_; }
-        const canvas::Canvas & mask() const { return mask_; }
+    // Name given to the layer by the user. Empty means "use the automatic
+    // name" (e.g. "Grade Layer 2").
+    void set_layer_name(const std::string &val) { layer_name_ = val; }
+    std::string layer_name() const { return layer_name_; }
 
-      private:
-        friend void from_json(const nlohmann::json &j, GradingData &gd);
-        friend void to_json(nlohmann::json &j, const GradingData &gd);
+    Grade &grade() { return grade_; }
+    const Grade &grade() const { return grade_; }
 
-        std::string colour_space_ {"scene_linear"};
-        Grade grade_;
-        bool mask_active_ {false};
-        bool mask_editing_ {false};
-        canvas::Canvas mask_;
-    };
+    void set_mask_active(bool val) { mask_active_ = val; }
+    bool mask_active() const { return mask_active_; }
 
-    void from_json(const nlohmann::json &j, GradingData &gd);
-    void to_json(nlohmann::json &j, const GradingData &gd);
+    void set_mask_editing(bool val) { mask_editing_ = val; }
+    bool mask_editing() const { return mask_editing_; }
 
-    typedef std::shared_ptr<GradingData> GradingDataPtr;
+    canvas::Canvas &mask() { return mask_; }
+    const canvas::Canvas &mask() const { return mask_; }
 
-    // This struct is a convenience wrapper to bundle GradingData
-    // with other metadatas living in the bookmark user_data field.
-    struct GradingInfo {
-        const GradingData* data;
-        bool grade_active;
-    };
+  private:
+    friend void from_json(const nlohmann::json &j, GradingData &gd);
+    friend void to_json(nlohmann::json &j, const GradingData &gd);
 
-} // end namespace viewport
+    std::string colour_space_{"scene_linear"};
+    std::string layer_name_;
+    Grade grade_;
+    bool mask_active_{false};
+    bool mask_editing_{false};
+    canvas::Canvas mask_;
+};
+
+void from_json(const nlohmann::json &j, GradingData &gd);
+void to_json(nlohmann::json &j, const GradingData &gd);
+
+typedef std::shared_ptr<GradingData> GradingDataPtr;
+
+// This struct is a convenience wrapper to bundle GradingData
+// with other metadatas living in the bookmark user_data field.
+struct GradingInfo {
+    const GradingData *data;
+    bool grade_active;
+};
+
+} // namespace xstudio::ui::viewport

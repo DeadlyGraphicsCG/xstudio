@@ -34,31 +34,33 @@ class GradingColourOperator : public ColourOpPlugin {
 
     plugin::GPUPreDrawHookPtr make_pre_draw_gpu_hook(const std::string &viewport_name) override;
 
+    // Shader and LUT data of the grading operation for some media, with
+    // conversion code for the given grade layer working spaces. Results are
+    // cached and shared, it is safe to call this from any thread.
+    static ColourOperationDataPtr colour_op_data_for(
+        const utility::JsonStore &media_source_colour_metadata,
+        const std::vector<std::string> &working_spaces);
+
+    // The working spaces built into the grading shader attached to the image
+    // (the default ones if the image has no grading shader yet).
+    static std::vector<std::string>
+    image_working_spaces(const media_reader::ImageBufPtr &image);
+
   protected:
     caf::message_handler message_handler_extensions() override;
 
   private:
-    std::shared_ptr<ColourOperationData>
-    setup_shader_data(const utility::JsonStore &media_source_colour_metadata);
+    static std::shared_ptr<ColourOperationData> setup_shader_data(
+        const utility::JsonStore &media_source_colour_metadata,
+        const std::vector<std::string> &working_spaces);
 
-    OCIO::ConstGpuShaderDescRcPtr setup_ocio_shader(
-        const std::string &function_name,
-        const std::string &resource_prefix,
-        const utility::JsonStore &metadata,
-        const std::string &src,
-        const std::string &dst);
-
-    std::vector<ColourLUTPtr> setup_ocio_textures(OCIO::ConstGpuShaderDescRcPtr &shader);
+    static std::vector<ColourLUTPtr> setup_ocio_textures(OCIO::ConstGpuShaderDescRcPtr &shader);
 
     void update_dynamic_parameters(
         OCIO::ConstGpuShaderDescRcPtr &shader, const ui::viewport::Grade &grade) const;
 
     void update_all_uniforms(
         OCIO::ConstGpuShaderDescRcPtr &shader, utility::JsonStore &uniforms) const;
-
-    ui::viewport::GPUShaderPtr gradingop_shader_;
-
-    std::map<size_t, ColourOperationDataPtr> colour_op_data_cache_;
 
     bool bypass_ = {false};
 };

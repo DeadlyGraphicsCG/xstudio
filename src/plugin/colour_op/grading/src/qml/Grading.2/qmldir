@@ -9,6 +9,7 @@ Sec0Menu            2.0 sections/Sec0Menu.qml
 Sec1Header          2.0 sections/Sec1Header.qml
 Sec2LayerList       2.0 sections/Sec2LayerList.qml
 Sec3MaskTools       2.0 sections/Sec3MaskTools.qml
+Sec4LayerSettings   2.0 sections/Sec4LayerSettings.qml
 
 GTSliderDiv         2.0 delegates/GTSliderDiv.qml
 GTSliderItem        2.0 delegates/GTSliderItem.qml
