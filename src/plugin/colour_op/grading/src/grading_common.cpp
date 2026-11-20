@@ -8,6 +8,7 @@
 #include "grading_mask_gl_renderer.h"
 #include "grading_colour_op.hpp"
 #include "grading_common.h"
+#include "grade_stack.h"
 
 using namespace xstudio;
 using namespace xstudio::ui::viewport;
@@ -20,14 +21,11 @@ bookmark::BookmarkAndAnnotations xstudio::ui::viewport::get_active_grade_bookmar
 
     // Make sure the bookmarks are applied in a consistent order.
     // The order matters when applying multiple CDLs.
+    // Layers from a colour profile can sit below or above the shot's own
+    // layers, otherwise layers keep their created time order.
     bookmark::BookmarkAndAnnotations all_bookmarks = image.bookmarks();
-    std::sort(all_bookmarks.begin(), all_bookmarks.end(), [](auto &a, auto &b) {
-        if (a->detail_.created_ && b->detail_.created_) {
-            return a->detail_.created_.value() < b->detail_.created_.value();
-        } else {
-            // Make a guess
-            return true;
-        }
+    std::stable_sort(all_bookmarks.begin(), all_bookmarks.end(), [](auto &a, auto &b) {
+        return grade_stack::layer_less(a->detail_, b->detail_);
     });
 
     for (auto &bookmark : all_bookmarks) {
@@ -50,13 +48,8 @@ xstudio::ui::viewport::get_active_grades(const xstudio::media_reader::ImageBufPt
     // Make sure the bookmarks are applied in a consistent order.
     // The order matters when applying multiple CDLs.
     auto bookmarks = image.bookmarks();
-    std::sort(bookmarks.begin(), bookmarks.end(), [](auto &a, auto &b) {
-        if (a->detail_.created_ && b->detail_.created_) {
-            return a->detail_.created_.value() < b->detail_.created_.value();
-        } else {
-            // Make a guess
-            return true;
-        }
+    std::stable_sort(bookmarks.begin(), bookmarks.end(), [](auto &a, auto &b) {
+        return grade_stack::layer_less(a->detail_, b->detail_);
     });
 
     for (auto &bookmark : bookmarks) {

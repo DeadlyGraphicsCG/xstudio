@@ -11,6 +11,8 @@ set(SOURCES
 	grading_common.cpp
 	grading.cpp
 	grading_mask_gl_renderer.cpp
+	grade_stack.cpp
+	grade_stack_actions.cpp
 	serialisers/1.0/serialiser_1_pt_0.cpp
 )
 

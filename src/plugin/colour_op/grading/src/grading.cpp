@@ -201,6 +201,9 @@ GradingTool::GradingTool(caf::actor_config &cfg, const utility::JsonStore &init_
     display_mode_attribute_->expose_in_ui_attrs_group("mask_tool_settings");
     display_mode_attribute_->set_preference_path("/plugin/grading/display_mode");
 
+    // Colour profiles (saved grade stacks)
+    grade_stack_init();
+
     make_behavior();
     listen_to_playhead_events(true);
 
@@ -382,6 +385,11 @@ void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const i
     if (role != module::Attribute::Value)
         return;
 
+    if (grade_stack_attribute_changed(attribute_uuid)) {
+        redraw_viewport();
+        return;
+    }
+
     if (attribute_uuid == tool_opened_count_->uuid()) {
 
 
@@ -539,6 +547,7 @@ void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const i
                         media_actor, *bookmark->detail_.logical_start_frame_);
                     copy_bookmark_on_media(bookmark, frame_id, startlayerno++);
                 }
+                grade_stack_restack_above_layers(media_actor);
             }
         }
 
@@ -1305,6 +1314,9 @@ void GradingTool::create_bookmark() {
         grading_bookmark_->set_value(utility::to_string(uuid), false);
 
         refresh_ui_from_current_grade();
+
+        // keep colour profile layers placed 'above' at the end of the layer list
+        grade_stack_restack_above_layers(current_media_actor_);
     }
 
     spdlog::debug("Created bookmark {}", utility::to_string(grading_data_.bookmark_uuid_));

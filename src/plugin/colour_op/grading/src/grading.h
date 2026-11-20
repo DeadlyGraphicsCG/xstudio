@@ -9,6 +9,7 @@
 #include "xstudio/colour_pipeline/colour_operation.hpp"
 #include "grading_data.h"
 #include "grading_mask_gl_renderer.h"
+#include "grade_stack.h"
 
 namespace OCIO = OCIO_NAMESPACE;
 
@@ -178,6 +179,36 @@ class GradingTool : public plugin::StandardPlugin {
     bookmark::BookmarkAndAnnotations grading_bookmark_buffer_;
 
     std::vector<caf::actor> grading_colour_op_actors_;
+
+    // Colour profiles (saved grade stacks), see grade_stack_actions.cpp
+    void grade_stack_init();
+    bool grade_stack_attribute_changed(const utility::Uuid &attribute_uuid);
+    void grade_stack_handle_action(const std::string &action_json);
+    void grade_stack_save(const utility::JsonStore &args);
+    void grade_stack_apply(const utility::JsonStore &args);
+    void grade_stack_remove(const utility::JsonStore &args);
+    void grade_stack_undo();
+    void grade_stack_import(const utility::JsonStore &args);
+    void grade_stack_export(const utility::JsonStore &args);
+    void grade_stack_delete(const utility::JsonStore &args);
+    void grade_stack_refresh_profiles();
+    void grade_stack_restack_above_layers(const caf::actor &media_actor);
+    void grade_stack_set_status(bool ok, const std::string &message);
+    void grade_stack_reselect_current_layer();
+    std::vector<caf::actor> grade_stack_target_media(const std::string &scope) const;
+    std::vector<ui::viewport::grade_stack::ExistingLayer>
+    grade_stack_existing_layers(const caf::actor &media_actor);
+    std::string grade_stack_folder() const;
+
+    module::StringAttribute *grade_stack_action_{nullptr};
+    module::StringAttribute *grade_stack_profiles_{nullptr};
+    module::StringAttribute *grade_stack_status_{nullptr};
+    module::StringAttribute *grade_stack_folder_{nullptr};
+    module::StringAttribute *grade_stack_default_folder_{nullptr};
+    module::StringChoiceAttribute *grade_stack_position_{nullptr};
+    module::BooleanAttribute *grade_stack_can_undo_{nullptr};
+    ui::viewport::grade_stack::UndoStep grade_stack_undo_;
+    int grade_stack_status_count_{0};
 };
 
 } // xstudio::colour_pipeline
