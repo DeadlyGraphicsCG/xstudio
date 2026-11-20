@@ -18,10 +18,29 @@ struct Grade {
     double exposure{0.0};
     double contrast{1.0};
 
+    // Optional per channel (R, G, B) trims, applied on top of the master
+    // values above. exposure_rgb is added to exposure (in stops), while
+    // contrast_rgb and sat_rgb are multiplied with contrast and sat. The
+    // defaults change nothing, so grades saved before these fields existed
+    // look exactly the same.
+    std::array<double, 3> exposure_rgb{0.0, 0.0, 0.0};
+    std::array<double, 3> contrast_rgb{1.0, 1.0, 1.0};
+    std::array<double, 3> sat_rgb{1.0, 1.0, 1.0};
+
+    // Final value per channel (master combined with the per channel trim).
+    [[nodiscard]] std::array<double, 3> effective_exposure() const;
+    [[nodiscard]] std::array<double, 3> effective_contrast() const;
+    [[nodiscard]] std::array<double, 3> effective_sat() const;
+
+    // True when any per channel trim differs from its default.
+    [[nodiscard]] bool has_per_channel_values() const;
+
     bool operator==(const Grade &o) const {
         return (
             slope == o.slope && offset == o.offset && power == o.power && sat == o.sat &&
-            exposure == o.exposure && contrast == o.contrast);
+            exposure == o.exposure && contrast == o.contrast &&
+            exposure_rgb == o.exposure_rgb && contrast_rgb == o.contrast_rgb &&
+            sat_rgb == o.sat_rgb);
     }
 };
 
@@ -35,6 +54,7 @@ class GradingData : public bookmark::AnnotationBase {
     GradingData(const GradingData &o)
         : AnnotationBase(),
           colour_space_(o.colour_space_),
+          layer_name_(o.layer_name_),
           grade_(o.grade_),
           mask_active_(o.mask_active_),
           mask_editing_(o.mask_editing_),
@@ -44,6 +64,7 @@ class GradingData : public bookmark::AnnotationBase {
 
     GradingData &operator=(const GradingData &o) {
         colour_space_  = o.colour_space_;
+        layer_name_    = o.layer_name_;
         grade_         = o.grade_;
         mask_active_   = o.mask_active_;
         mask_editing_  = o.mask_editing_;
@@ -54,9 +75,9 @@ class GradingData : public bookmark::AnnotationBase {
 
     bool operator==(const GradingData &o) const {
         return (
-            colour_space_ == o.colour_space_ && grade_ == o.grade_ &&
-            mask_active_ == o.mask_active_ && mask_editing_ == o.mask_editing_ &&
-            mask_ == o.mask_);
+            colour_space_ == o.colour_space_ && layer_name_ == o.layer_name_ &&
+            grade_ == o.grade_ && mask_active_ == o.mask_active_ &&
+            mask_editing_ == o.mask_editing_ && mask_ == o.mask_);
     }
 
     [[nodiscard]] utility::JsonStore serialise(utility::Uuid &plugin_uuid) const override;
@@ -65,6 +86,11 @@ class GradingData : public bookmark::AnnotationBase {
 
     void set_colour_space(const std::string &val) { colour_space_ = val; }
     std::string colour_space() const { return colour_space_; }
+
+    // Name given to the layer by the user. Empty means "use the automatic
+    // name" (e.g. "Grade Layer 2").
+    void set_layer_name(const std::string &val) { layer_name_ = val; }
+    std::string layer_name() const { return layer_name_; }
 
     Grade &grade() { return grade_; }
     const Grade &grade() const { return grade_; }
@@ -83,6 +109,7 @@ class GradingData : public bookmark::AnnotationBase {
     friend void to_json(nlohmann::json &j, const GradingData &gd);
 
     std::string colour_space_{"scene_linear"};
+    std::string layer_name_;
     Grade grade_;
     bool mask_active_{false};
     bool mask_editing_{false};
