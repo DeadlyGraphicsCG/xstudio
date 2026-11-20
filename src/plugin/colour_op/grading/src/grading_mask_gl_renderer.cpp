@@ -10,6 +10,7 @@
 #include "grading_mask_gl_renderer.h"
 #include "grading_colour_op.hpp"
 #include "grading_common.h"
+#include "grading_working_space.h"
 
 using namespace xstudio;
 using namespace xstudio::ui::canvas;
@@ -49,8 +50,72 @@ void GradingMaskRenderer::pre_viewport_draw_gpu_hook(
 
     auto active_grades = get_active_grades(image);
     if (active_grades.size()) {
+        // Must happen first, as the mask code below copies the colour op
+        // data attached to the image.
+        update_working_spaces(active_grades, image);
         render_grading_data_masks(active_grades, image);
     }
+}
+
+void GradingMaskRenderer::update_working_spaces(
+    const std::vector<GradingInfo> &grades, xstudio::media_reader::ImageBufPtr &image) {
+
+    if (!image.colour_pipe_data() || !image.colour_pipe_data()->get_operation_data(
+                                         colour_pipeline::GradingColourOperator::PLUGIN_UUID)) {
+        return;
+    }
+
+    const utility::JsonStore &colour_metadata = image.frame_id().params();
+    const std::string reference =
+        colour_pipeline::grading::reference_working_space(colour_metadata);
+    const std::vector<std::string> current_spaces =
+        colour_pipeline::GradingColourOperator::image_working_spaces(image);
+
+    std::vector<std::string> requested;
+    bool missing = false;
+    for (const auto &grade_info : grades) {
+        const std::string space = grade_info.data->colour_space();
+        requested.push_back(space);
+        if (colour_pipeline::grading::working_space_index(current_spaces, space, reference) <
+            0) {
+            missing = true;
+        }
+    }
+
+    // Nothing to do in the common case: the shader already knows every space.
+    if (!missing) {
+        return;
+    }
+
+    const std::vector<std::string> spaces =
+        colour_pipeline::grading::shader_working_spaces(requested, reference);
+    auto colour_op_data =
+        colour_pipeline::GradingColourOperator::colour_op_data_for(colour_metadata, spaces);
+    if (!colour_op_data) {
+        return;
+    }
+
+    // The uniforms were computed against the old shader, fix the indexes.
+    // Grades are indexed in the same order as in
+    // GradingColourOperator::update_shader_uniforms.
+    auto &uniforms = image.colour_pipe_uniforms();
+    for (size_t i = 0; i < grades.size(); ++i) {
+        const std::string key = fmt::format("grades[{}].color_space", i);
+        if (uniforms.contains(key)) {
+            uniforms[key] = std::max(
+                0,
+                colour_pipeline::grading::working_space_index(
+                    spaces, grades[i].data->colour_space(), reference));
+        }
+    }
+
+    // colour_pipe_data() is shared, so modify a copy (see the notes in
+    // render_grading_data_masks).
+    image.colour_pipe_data().reset(
+        new colour_pipeline::ColourPipelineData(*(image.colour_pipe_data())));
+    image.colour_pipe_data()->overwrite_operation_data(colour_op_data);
+    image.colour_pipe_data()->set_cache_id(
+        image.colour_pipe_data()->cache_id() + colour_op_data->cache_id());
 }
 
 void GradingMaskRenderer::add_layer() {

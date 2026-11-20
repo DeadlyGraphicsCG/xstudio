@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
+#include <any>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <caf/actor_registry.hpp>
 
 #include "xstudio/ui/opengl/shader_program_base.hpp"
@@ -12,6 +15,7 @@
 #include "grading_mask_render_data.h"
 #include "grading_mask_gl_renderer.h"
 #include "grading_common.h"
+#include "grading_working_space.h"
 
 using namespace xstudio;
 using namespace xstudio::bookmark;
@@ -24,8 +28,9 @@ namespace {
 
 const char *fragment_shader = R"(
 #version 410 core
-#define SCENE_LINEAR 0
-#define COMPOSITING_LOG 1
+// Index of the space the pixels arrive in (the media working space, usually
+// scene_linear). Other indexes are the working spaces of the grade layers.
+#define REFERENCE_SPACE 0
 
 struct Grade {
     int color_space;
@@ -39,10 +44,11 @@ struct Grade {
     vec3 slope;
     vec3 offset;
     vec3 power;
-    float sat;
+    vec3 sat;
 
-    float exposure;
-    float contrast;
+    // Per channel values (master and R/G/B trims already combined)
+    vec3 exposure;
+    vec3 contrast;
 
     // Can be extended with more grading operations
 };
@@ -61,16 +67,16 @@ vec4 apply_grade(vec4 rgba, int layer_index)
 
     // Exposure
 
-    if (grade.exposure != 0.)
+    if (grade.exposure != vec3(0., 0., 0.))
     {
-        outColor.rgb *= pow(2.0, grade.exposure);
+        outColor.rgb *= pow(vec3(2.0), grade.exposure);
     }
 
     // Contrast
 
-    if (grade.contrast != 1.)
+    if (grade.contrast != vec3(1., 1., 1.))
     {
-        outColor.rgb = pow( abs(outColor.rgb / 0.18), vec3(grade.contrast)) * sign(outColor.rgb) * 0.18;
+        outColor.rgb = pow( abs(outColor.rgb / 0.18), grade.contrast) * sign(outColor.rgb) * 0.18;
     }
 
     // CDL SOP
@@ -91,7 +97,10 @@ vec4 apply_grade(vec4 rgba, int layer_index)
 
     // CDL Sat
 
-    if (grade.sat != 1.)
+    // Per channel saturation works like Nuke's ColorCorrect: each channel is
+    // pushed away from (or pulled towards) the luma by its own amount.
+
+    if (grade.sat != vec3(1., 1., 1.))
     {
         vec3 lumaWgts = vec3(0.212599993, 0.715200007, 0.0722000003);
         float luma = dot(outColor.rgb, lumaWgts);
@@ -126,20 +135,20 @@ vec4 apply_layer(vec4 rgba, vec2 image_pos, int layer_index)
     }
 }
 
-//INJECT_LIN_TO_LOG
-//INJECT_LOG_TO_LIN
+//INJECT_WORKING_SPACES
 
 vec4 apply_color_conv(vec4 rgba, int source_space, int dest_space)
 {
     if (source_space != dest_space)
     {
-        if (source_space == SCENE_LINEAR)
+        // Always go through the reference space
+        if (source_space != REFERENCE_SPACE)
         {
-            rgba = OCIOLinToLog(rgba);
+            rgba = grading_from_working_space(rgba, source_space);
         }
-        else
+        if (dest_space != REFERENCE_SPACE)
         {
-            rgba = OCIOLogToLin(rgba);
+            rgba = grading_to_working_space(rgba, dest_space);
         }
     }
 
@@ -152,8 +161,8 @@ vec4 colour_transform_op(vec4 rgba, vec2 image_pos)
 
     if (tool_active)
     {
-        // xStudio guarantee conversion to scene_linear
-        int current_space = SCENE_LINEAR;
+        // xStudio guarantees the pixels arrive in the media working space
+        int current_space = REFERENCE_SPACE;
 
         for (int i = 0; i < grade_count; ++i)
         {
@@ -167,9 +176,9 @@ vec4 colour_transform_op(vec4 rgba, vec2 image_pos)
             }
         }
 
-        if (current_space != SCENE_LINEAR)
+        if (current_space != REFERENCE_SPACE)
         {
-            image_col = apply_color_conv(image_col, current_space, SCENE_LINEAR);
+            image_col = apply_color_conv(image_col, current_space, REFERENCE_SPACE);
         }
     }
 
@@ -216,29 +225,14 @@ caf::message_handler GradingColourOperator::message_handler_extensions() {
 ColourOperationDataPtr GradingColourOperator::colour_op_graphics_data(
     utility::UuidActor &media_source, const utility::JsonStore &media_source_colour_metadata) {
 
-    // The result of this call will depend on the ocio config, as the grading op
-    // depends on the lin to lon transform which generally varies per ocio config.
-
-    // It's also possible that the result will depend on the ocio_context because
-    // for some jobs the log to lin transform varies PER SHOT. To Be extra safe
-    // we make a hash from the whole context data dictionary
-
-    std::string hash_data;
-    if (media_source_colour_metadata.contains("ocio_config")) {
-        hash_data += media_source_colour_metadata.get_or("ocio_config", std::string(""));
-    }
-    if (media_source_colour_metadata.contains("ocio_context")) {
-        hash_data += media_source_colour_metadata["ocio_context"].dump();
-    }
-
-    size_t hash = std::hash<std::string>{}(hash_data);
-    auto p      = colour_op_data_cache_.find(hash);
-    if (p != colour_op_data_cache_.end()) {
-        return p->second;
-    }
-
-    colour_op_data_cache_[hash] = setup_shader_data(media_source_colour_metadata);
-    return colour_op_data_cache_[hash];
+    // The result of this call depends on the ocio config and on the
+    // ocio_context (for some jobs the lin to log transform varies PER SHOT),
+    // both are part of the cache key used by colour_op_data_for(). Here we
+    // build the shader with the default working spaces only. If a grade layer
+    // on the image uses another working space, the GradingMaskRenderer
+    // pre-draw hook swaps in a shader that supports it just before drawing.
+    return colour_op_data_for(
+        media_source_colour_metadata, grading::default_shader_working_spaces());
 }
 
 utility::JsonStore
@@ -252,6 +246,11 @@ GradingColourOperator::update_shader_uniforms(const media_reader::ImageBufPtr &i
         return uniforms_dict;
     }
 
+    // The working spaces built into the shader that will draw this image, so
+    // that the 'color_space' index we send matches the shader.
+    const std::vector<std::string> shader_spaces = image_working_spaces(image);
+    const std::string reference = grading::reference_working_space(image.frame_id().params());
+
     size_t grade_count = 0;
     auto active_grades = get_active_grades(image);
     for (const auto grade_info : active_grades) {
@@ -262,10 +261,13 @@ GradingColourOperator::update_shader_uniforms(const media_reader::ImageBufPtr &i
 
         uniforms_dict[grade_str + "grade_active"] = grade_info.grade_active;
 
-        // We only support compositing_log as colour space conversion for now.
-        // All other values will be treated as being the current colour space.
-        uniforms_dict[grade_str + "color_space"] =
-            grade_data->colour_space() == "compositing_log" ? 1 : 0;
+        // Index of the layer working space in the shader. A space the shader
+        // does not know yet (-1) is applied in the reference space for now;
+        // the pre-draw hook replaces the shader and fixes this index before
+        // the image is drawn.
+        uniforms_dict[grade_str + "color_space"] = std::max(
+            0,
+            grading::working_space_index(shader_spaces, grade_data->colour_space(), reference));
         uniforms_dict[grade_str + "mask_active"] = !grade_data->mask().empty();
 
         // NOTE (Ted) ..
@@ -280,27 +282,38 @@ GradingColourOperator::update_shader_uniforms(const media_reader::ImageBufPtr &i
         // Here's what we used to have here:
         // uniforms_dict[grade_str + "mask_editing"] = grade_data->mask_editing();
 
+        const auto &grade = grade_data->grade();
+
         uniforms_dict[grade_str + "slope"] = {
             "vec3",
             1,
-            grade_data->grade().slope[0] * grade_data->grade().slope[3],
-            grade_data->grade().slope[1] * grade_data->grade().slope[3],
-            grade_data->grade().slope[2] * grade_data->grade().slope[3]};
+            grade.slope[0] * grade.slope[3],
+            grade.slope[1] * grade.slope[3],
+            grade.slope[2] * grade.slope[3]};
         uniforms_dict[grade_str + "offset"] = {
             "vec3",
             1,
-            grade_data->grade().offset[0] + grade_data->grade().offset[3],
-            grade_data->grade().offset[1] + grade_data->grade().offset[3],
-            grade_data->grade().offset[2] + grade_data->grade().offset[3]};
+            grade.offset[0] + grade.offset[3],
+            grade.offset[1] + grade.offset[3],
+            grade.offset[2] + grade.offset[3]};
         uniforms_dict[grade_str + "power"] = {
             "vec3",
             1,
-            grade_data->grade().power[0] * grade_data->grade().power[3],
-            grade_data->grade().power[1] * grade_data->grade().power[3],
-            grade_data->grade().power[2] * grade_data->grade().power[3]};
-        uniforms_dict[grade_str + "sat"]      = grade_data->grade().sat;
-        uniforms_dict[grade_str + "exposure"] = grade_data->grade().exposure;
-        uniforms_dict[grade_str + "contrast"] = grade_data->grade().contrast;
+            grade.power[0] * grade.power[3],
+            grade.power[1] * grade.power[3],
+            grade.power[2] * grade.power[3]};
+
+        // Master and per channel values are combined here, the shader only
+        // sees the final value per channel.
+        const auto sat      = grade.effective_sat();
+        const auto exposure = grade.effective_exposure();
+        const auto contrast = grade.effective_contrast();
+
+        uniforms_dict[grade_str + "sat"]      = {"vec3", 1, sat[0], sat[1], sat[2]};
+        uniforms_dict[grade_str + "exposure"] = {
+            "vec3", 1, exposure[0], exposure[1], exposure[2]};
+        uniforms_dict[grade_str + "contrast"] = {
+            "vec3", 1, contrast[0], contrast[1], contrast[2]};
 
         grade_count++;
     }
@@ -315,8 +328,57 @@ GradingColourOperator::update_shader_uniforms(const media_reader::ImageBufPtr &i
     return uniforms_dict;
 }
 
+std::vector<std::string>
+GradingColourOperator::image_working_spaces(const media_reader::ImageBufPtr &image) {
+
+    if (image.colour_pipe_data()) {
+        for (const auto &op : image.colour_pipe_data()->operations()) {
+            if (op && op->uuid_ == PLUGIN_UUID) {
+                if (const auto *spaces =
+                        std::any_cast<std::vector<std::string>>(&op->user_data_)) {
+                    return *spaces;
+                }
+            }
+        }
+    }
+    return grading::default_shader_working_spaces();
+}
+
+ColourOperationDataPtr GradingColourOperator::colour_op_data_for(
+    const utility::JsonStore &media_source_colour_metadata,
+    const std::vector<std::string> &working_spaces) {
+
+    // Shared by all GradingColourOperator instances and by the pre-draw hooks
+    // (which run in the viewport drawing thread), hence the mutex.
+    static std::mutex cache_mutex;
+    static std::map<std::string, ColourOperationDataPtr> cache;
+
+    std::string key = grading::colour_metadata_key(media_source_colour_metadata);
+    for (const auto &space : working_spaces) {
+        key += "\n" + space;
+    }
+
+    std::lock_guard<std::mutex> lock(cache_mutex);
+
+    auto p = cache.find(key);
+    if (p != cache.end()) {
+        return p->second;
+    }
+
+    // Keep memory in check if many configs / combinations are used in a
+    // long session. Data still referenced elsewhere stays alive.
+    if (cache.size() > 256) {
+        cache.clear();
+    }
+
+    auto data  = setup_shader_data(media_source_colour_metadata, working_spaces);
+    cache[key] = data;
+    return data;
+}
+
 std::shared_ptr<ColourOperationData> GradingColourOperator::setup_shader_data(
-    const utility::JsonStore &media_source_colour_metadata) {
+    const utility::JsonStore &media_source_colour_metadata,
+    const std::vector<std::string> &working_spaces) {
 
     auto colour_op_data =
         std::make_shared<ColourOperationData>(ColourOperationData(PLUGIN_UUID, "Grade OP"));
@@ -324,35 +386,25 @@ std::shared_ptr<ColourOperationData> GradingColourOperator::setup_shader_data(
     std::string fs_str                 = fragment_shader;
     std::vector<ColourLUTPtr> &fs_luts = colour_op_data->luts_;
 
-    // Inject colour transforms
-    {
-        auto desc = setup_ocio_shader(
-            "OCIOLinToLog",
-            "ocio_lin_to_log",
-            media_source_colour_metadata,
-            "scene_linear",
-            "compositing_log");
-        fs_str    = utility::replace_once(fs_str, "//INJECT_LIN_TO_LOG", desc->getShaderText());
-        auto luts = setup_ocio_textures(desc);
-        fs_luts.insert(fs_luts.end(), luts.begin(), luts.end());
-    }
-    {
-        auto desc = setup_ocio_shader(
-            "OCIOLogToLin",
-            "ocio_log_to_lin",
-            media_source_colour_metadata,
-            "compositing_log",
-            "scene_linear");
-        fs_str    = utility::replace_once(fs_str, "//INJECT_LOG_TO_LIN", desc->getShaderText());
+    // Inject the conversions between the reference space and the working
+    // spaces of the grade layers
+    auto working_space_shader =
+        grading::build_working_space_shader(media_source_colour_metadata, working_spaces);
+    fs_str =
+        utility::replace_once(fs_str, "//INJECT_WORKING_SPACES", working_space_shader.glsl);
+    for (auto &desc : working_space_shader.shader_descs) {
         auto luts = setup_ocio_textures(desc);
         fs_luts.insert(fs_luts.end(), luts.begin(), luts.end());
     }
 
-    gradingop_shader_ = std::make_shared<ui::opengl::OpenGLShader>(PLUGIN_UUID, fs_str);
+    colour_op_data->shader_ = std::make_shared<ui::opengl::OpenGLShader>(PLUGIN_UUID, fs_str);
 
-    colour_op_data->shader_ = gradingop_shader_;
-    colour_op_data->set_cache_id(
-        fmt::format("{}", std::hash<std::string_view>{}(fragment_shader)));
+    // Remember which working space each 'color_space' index refers to
+    colour_op_data->user_data_ = working_spaces;
+
+    // The shader text depends on the OCIO config, the context and the working
+    // spaces, so it is part of the cache id (with the LUT contents).
+    colour_op_data->set_cache_id(fmt::format("{}", std::hash<std::string>{}(fs_str)));
     for (const auto &lut : fs_luts) {
         colour_op_data->set_cache_id(
             colour_op_data->cache_id() + fmt::format("{}", lut->cache_id()));
@@ -363,44 +415,6 @@ std::shared_ptr<ColourOperationData> GradingColourOperator::setup_shader_data(
 plugin::GPUPreDrawHookPtr
 GradingColourOperator::make_pre_draw_gpu_hook(const std::string &viewport_name) {
     return std::make_shared<GradingMaskRenderer>(viewport_name);
-}
-
-OCIO::ConstGpuShaderDescRcPtr GradingColourOperator::setup_ocio_shader(
-    const std::string &function_name,
-    const std::string &resource_prefix,
-    const utility::JsonStore &metadata,
-    const std::string &src,
-    const std::string &dst) {
-
-    auto desc = OCIO::GpuShaderDesc::CreateShaderDesc();
-    desc->setLanguage(OCIO::GPU_LANGUAGE_GLSL_4_0);
-    desc->setFunctionName(function_name.c_str());
-    desc->setResourcePrefix(resource_prefix.c_str());
-
-    try {
-        const std::string config_name = metadata.get_or("ocio_config", std::string(""));
-        auto config                   = OCIO::Config::CreateFromFile(config_name.c_str());
-
-        auto context = config->getCurrentContext()->createEditableCopy();
-        if (metadata.contains("ocio_context")) {
-            if (metadata["ocio_context"].is_object()) {
-                for (auto &item : metadata["ocio_context"].items()) {
-                    context->setStringVar(
-                        item.key().c_str(), std::string(item.value()).c_str());
-                }
-            }
-        }
-
-        auto gpu =
-            config->getProcessor(context, src.c_str(), dst.c_str())->getDefaultGPUProcessor();
-        gpu->extractGpuShaderInfo(desc);
-        return desc;
-    } catch (const OCIO::Exception &ex) {
-        auto config = OCIO::Config::CreateRaw();
-        auto gpu    = config->getProcessor("raw", "raw")->getDefaultGPUProcessor();
-        gpu->extractGpuShaderInfo(desc);
-        return desc;
-    }
 }
 
 std::vector<ColourLUTPtr>

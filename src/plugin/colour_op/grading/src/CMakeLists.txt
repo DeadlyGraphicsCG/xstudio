@@ -6,6 +6,7 @@ find_package(Qt6 COMPONENTS Concurrent Core Quick Gui Qml Widgets OpenGL REQUIRE
 
 set(SOURCES
 	grading_data.cpp
+	grading_working_space.cpp
 	grading_data_serialiser.cpp
 	grading_colour_op.cpp
 	grading_common.cpp

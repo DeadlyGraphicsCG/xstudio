@@ -43,6 +43,12 @@ class GradingMaskRenderer : public plugin::GPUPreDrawHook {
     void render_grading_data_masks(
         const std::vector<GradingInfo> &grades, xstudio::media_reader::ImageBufPtr &image);
 
+    // Makes sure the grading shader attached to the image can convert to the
+    // working space of every grade layer on it. If not, swaps in a shader
+    // that can and updates the 'color_space' uniforms to match.
+    void update_working_spaces(
+        const std::vector<GradingInfo> &grades, xstudio::media_reader::ImageBufPtr &image);
+
     void render_layer(
         const GradingData &data,
         RenderLayer &layer,
