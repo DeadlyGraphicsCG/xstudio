@@ -269,6 +269,13 @@ caf::message_handler VideoRenderPlugin::message_handler_extensions() {
     return caf::message_handler(
                {[=](utility::user_start_action_atom) {
                     if (current_worker_) {
+                        if (caf::actor_cast<caf::actor>(current_sender()) !=
+                            current_worker_.actor()) {
+                            // A request to start the queue (e.g. several jobs
+                            // were added at once) while a job is running. Let
+                            // it carry on: the next job starts when it is done.
+                            return;
+                        }
                         // cleanup the current worker, which has finished rendering
                         // (or failed)
                         send_exit(current_worker_.actor(), caf::exit_reason::user_shutdown);
@@ -742,6 +749,25 @@ void VideoRenderPlugin::make_offscreen_viewport(caf::typed_response_promise<bool
         rp.deliver(true);
         return;
     }
+
+    // Several renders can be queued at once (e.g. "Render All" in the
+    // dialog) before the viewport exists. Only make one viewport and answer
+    // all the requests when it is ready.
+    offscreen_viewport_requests_.push_back(rp);
+    if (offscreen_viewport_requests_.size() > 1)
+        return;
+
+    auto deliver_all = [=](const caf::error &err) mutable {
+        auto requests = offscreen_viewport_requests_;
+        offscreen_viewport_requests_.clear();
+        for (auto &r : requests) {
+            if (err)
+                r.deliver(err);
+            else
+                r.deliver(true);
+        }
+    };
+
     // Get the 'StudioUI' which lives in the Qt context and therefore is able to
     // create offscreen viewports for us
     auto studio_ui = system().registry().template get<caf::actor>(studio_ui_registry);
@@ -770,9 +796,9 @@ void VideoRenderPlugin::make_offscreen_viewport(caf::typed_response_promise<bool
                                 true)
                                 .send(dummy_colour_pipeline_);
 
-                            rp.deliver(true);
+                            deliver_all(caf::error());
                         },
-                        [=](caf::error &err) mutable { rp.deliver(err); });
+                        [=](caf::error &err) mutable { deliver_all(err); });
 
                 // We COULD create this post-render hook class, this will convert
                 // the RGB 16 bit OpenGL framebuffer to RGB 10-10-10 buffer for
@@ -784,7 +810,7 @@ void VideoRenderPlugin::make_offscreen_viewport(caf::typed_response_promise<bool
                 // viewport::ViewportFramePostProcessorPtr frameGrabber(new
                 // RGB10BitFrameGrabber()); anon_mail(frameGrabber).send(offscreen_viewport_);
             },
-            [=](caf::error &err) mutable { rp.deliver(err); });
+            [=](caf::error &err) mutable { deliver_all(err); });
 }
 
 
@@ -861,7 +887,7 @@ utility::JsonStore VideoRenderPlugin::qml_item_callback(
         callback_data.is_array() && (callback_data.size() == render_args_count ||
                                      callback_data.size() == render_args_count + 1)) {
 
-        if (!offscreen_viewport_) {
+        if (!offscreen_viewport_ || !colour_pipeline_) {
             // we don't yet have an offscreen viewport ... this needs to be created
             // asynchronously so we ping ourselves a message with the args of this
             // function - we then make the viewport

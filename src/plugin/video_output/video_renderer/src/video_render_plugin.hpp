@@ -75,6 +75,7 @@ class VideoRenderPlugin : public plugin::StandardPlugin {
 
     caf::message_handler message_handler_extensions() override;
     caf::actor offscreen_viewport_, colour_pipeline_, dummy_colour_pipeline_;
+    std::vector<caf::typed_response_promise<bool>> offscreen_viewport_requests_;
     utility ::Uuid render_menu_item_, render_menu_item2_;
     utility::Uuid grade_menu_item_, grade_menu_item2_, grade_clip_menu_item_;
     module::JsonAttribute *export_profiles_{nullptr};
