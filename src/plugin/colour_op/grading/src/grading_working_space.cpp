@@ -45,14 +45,16 @@ OCIO::ConstConfigRcPtr load_config(const std::string &config_name) {
 }
 
 // The GLSL code of one OCIO conversion, from 'src' to 'dst'. Falls back to
-// "no conversion" when OCIO can't build the conversion.
+// "no conversion" when OCIO can't build the conversion. 'warn' controls
+// whether that is logged as a warning (not for media without a config).
 OCIO::ConstGpuShaderDescRcPtr conversion_shader(
     const OCIO::ConstConfigRcPtr &config,
     const OCIO::ConstContextRcPtr &context,
     const std::string &function_name,
     const std::string &resource_prefix,
     const std::string &src,
-    const std::string &dst) {
+    const std::string &dst,
+    const bool warn) {
 
     auto desc = OCIO::GpuShaderDesc::CreateShaderDesc();
     desc->setLanguage(OCIO::GPU_LANGUAGE_GLSL_4_0);
@@ -67,7 +69,9 @@ OCIO::ConstGpuShaderDescRcPtr conversion_shader(
 
     } catch (const std::exception &e) {
 
-        spdlog::warn(
+        const auto level = warn ? spdlog::level::warn : spdlog::level::debug;
+        spdlog::log(
+            level,
             "Grading: can't convert from '{}' to '{}' ({}), this working space will be "
             "ignored.",
             src,
@@ -256,6 +260,13 @@ WorkingSpaceShader build_working_space_shader(
     auto context                = ocio_context(config, colour_metadata);
     const std::string reference = reference_working_space(colour_metadata);
 
+    // Media without an OCIO config (not colour managed) can't convert to any
+    // working space; that is expected, so it is not worth a warning.
+    const std::string config_name = colour_metadata.is_object()
+                                        ? colour_metadata.get_or("ocio_config", std::string(""))
+                                        : std::string("");
+    const bool warn               = !config_name.empty() && config_name != "__raw__";
+
     std::string to_dispatch   = "vec4 grading_to_working_space(vec4 rgba, int space)\n{\n";
     std::string from_dispatch = "vec4 grading_from_working_space(vec4 rgba, int space)\n{\n";
 
@@ -271,14 +282,16 @@ WorkingSpaceShader build_working_space_shader(
             to_fn,
             fmt::format("grading_ws{}_to_", index),
             reference,
-            spaces[i]);
+            spaces[i],
+            warn);
         auto from_desc = conversion_shader(
             config,
             context,
             from_fn,
             fmt::format("grading_ws{}_from_", index),
             spaces[i],
-            reference);
+            reference,
+            warn);
 
         result.glsl += fmt::format("// Working space {}: {}\n", index, spaces[i]);
         result.glsl += to_desc->getShaderText();
