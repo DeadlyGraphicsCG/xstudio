@@ -9,6 +9,22 @@
 				"datatype": "string",
 				"context": ["APPLICATION"]
 			},
+			"grade_stack_folder": {
+				"path": "/plugin/grading/grade_stack_folder",
+				"default_value": "",
+				"description": "Folder for saved colour profiles (grade stacks). Empty means the 'grade_profiles' folder next to your xSTUDIO preferences. Point it at a shared folder to share profiles across a show.",
+				"value": "",
+				"datatype": "string",
+				"context": ["APPLICATION"]
+			},
+			"grade_stack_position": {
+				"path": "/plugin/grading/grade_stack_position",
+				"default_value": "Below",
+				"description": "Where new colour profile layers go: Below (applied before) or Above (applied after) each shot's own grade layers.",
+				"value": "Below",
+				"datatype": "string",
+				"context": ["APPLICATION"]
+			},
 			"draw_pen_size": {
 				"path": "/plugin/grading/draw_pen_size",
 				"default_value": 10,

@@ -74,6 +74,11 @@ Item { id: dialog
         id: menus
     }
 
+    // Colour profiles (saved grade stacks)
+    GradeStackMenu {
+        menuModelName: menus.moreMenu.menu_model_name
+    }
+
 
     property alias bookmarkList: listDiv.bookmarkList
     
