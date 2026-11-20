@@ -248,7 +248,16 @@ GradingColourOperator::update_shader_uniforms(const media_reader::ImageBufPtr &i
     uniforms_dict["grade_count"] = 0;
     uniforms_dict["tool_active"] = false;
 
-    if (bypass_) {
+    // The video renderer sets 'ignore_grading_bypass' in the colour settings
+    // of its private copy of the media when the user asks for the grade to be
+    // burnt into a render, so the viewer's bypass switch can't leave it out.
+    const auto &colour_params = image.frame_id().params();
+    const bool ignore_bypass  = colour_params.is_object() &&
+                               colour_params.contains("ignore_grading_bypass") &&
+                               colour_params["ignore_grading_bypass"].is_boolean() &&
+                               colour_params["ignore_grading_bypass"].get<bool>();
+
+    if (bypass_ && !ignore_bypass) {
         return uniforms_dict;
     }
 
