@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <limits>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 
@@ -163,22 +164,6 @@ bool is_grading_bookmark(const nlohmann::json &bookmark_actor_json) {
            base["user_type"].get<std::string>() == "Grading";
 }
 
-nlohmann::json strip_grading_bookmarks(const nlohmann::json &bookmarks_serialisation) {
-
-    nlohmann::json result = bookmarks_serialisation;
-    if (!result.is_object() || !result.contains("actors") || !result["actors"].is_object())
-        return result;
-
-    auto &actors = result["actors"];
-    for (auto it = actors.begin(); it != actors.end();) {
-        if (is_grading_bookmark(it.value()))
-            it = actors.erase(it);
-        else
-            ++it;
-    }
-    return result;
-}
-
 size_t count_grading_bookmarks(const nlohmann::json &bookmarks_serialisation) {
     size_t count = 0;
     if (bookmarks_serialisation.is_object() && bookmarks_serialisation.contains("actors") &&
@@ -286,11 +271,13 @@ clip_name_from_colour_params(const nlohmann::json &colour_params, const std::str
             if (scheme != std::string::npos)
                 p = p.substr(scheme + 3);
             auto stem = std::filesystem::path(p).stem().string();
-            // frame sequences: "shot.####" -> "shot"
-            while (!stem.empty() &&
-                   (stem.back() == '#' || stem.back() == '.' || stem.back() == '@' ||
-                    stem.back() == '}' || stem.back() == '{'))
-                stem.pop_back();
+            // frame sequences: "shot.####", "shot.%04d", "shot.{:04d}" or
+            // "shot.1001" (first frame) -> "shot"
+            static const std::regex frame_part(
+                R"(^(.+?)(?:[._](?:#+|@+|%0?\d*d|\{:0?\d*d\})|\.\d+)$)");
+            std::smatch m;
+            if (std::regex_match(stem, m, frame_part))
+                stem = m[1].str();
             if (!stem.empty())
                 return stem;
         }

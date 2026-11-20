@@ -383,19 +383,16 @@ TEST(VideoRenderNamingTemplate, ExistingOutputsOnDisk) {
 // Grades in bookmarks
 // ---------------------------------------------------------------------------
 
-TEST(VideoRenderGradeSidecar, StripGradingBookmarks) {
+TEST(VideoRenderGradeSidecar, CountGradingBookmarks) {
 
     const auto bm = bookmarks_fixture();
     EXPECT_EQ(grade_sidecar::count_grading_bookmarks(bm), 3u);
+    EXPECT_TRUE(grade_sidecar::is_grading_bookmark(bm["actors"]["b1"]));
+    EXPECT_FALSE(grade_sidecar::is_grading_bookmark(bm["actors"]["n1"]));
 
-    const auto stripped = grade_sidecar::strip_grading_bookmarks(bm);
-    EXPECT_EQ(grade_sidecar::count_grading_bookmarks(stripped), 0u);
-    ASSERT_EQ(stripped["actors"].size(), 1u);
-    EXPECT_TRUE(stripped["actors"].contains("n1"));
-    EXPECT_EQ(stripped["base"], bm["base"]);
-
-    // things that are not bookmark serialisations pass through
-    EXPECT_EQ(grade_sidecar::strip_grading_bookmarks(json(5)), json(5));
+    // things that are not bookmark serialisations are fine too
+    EXPECT_EQ(grade_sidecar::count_grading_bookmarks(json(5)), 0u);
+    EXPECT_EQ(grade_sidecar::count_grading_bookmarks(json::object()), 0u);
 }
 
 TEST(VideoRenderGradeSidecar, LayersForMedia) {
@@ -441,6 +438,19 @@ TEST(VideoRenderGradeSidecar, ClipName) {
         grade_sidecar::clip_name_from_colour_params(
             json{{"path", "file:///jobs/plate.####.exr"}}, "x"),
         "plate");
+    EXPECT_EQ(
+        grade_sidecar::clip_name_from_colour_params(
+            json{{"path", "/a/sh020_comp.1001.png"}}, "x"),
+        "sh020_comp");
+    EXPECT_EQ(
+        grade_sidecar::clip_name_from_colour_params(json{{"path", "/a/sh030.{:04d}.exr"}}, "x"),
+        "sh030");
+    EXPECT_EQ(
+        grade_sidecar::clip_name_from_colour_params(json{{"path", "/a/sh040_v2.mov"}}, "x"),
+        "sh040_v2");
+    EXPECT_EQ(
+        grade_sidecar::clip_name_from_colour_params(json{{"path", "/a/sh_050.mov"}}, "x"),
+        "sh_050");
     EXPECT_EQ(
         grade_sidecar::clip_name_from_colour_params(json::object(), "fallback"), "fallback");
 }

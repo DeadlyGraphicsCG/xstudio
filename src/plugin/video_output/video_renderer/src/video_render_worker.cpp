@@ -925,14 +925,7 @@ void VideoRenderWorker::clone_render_target(
         // use the serialisation to clone the playlist and the container that
         // we are going to render. Note that bookmarks are managed by an instance
         // of 'BookmarksActor' so we need a separate duplicate of this.
-        //
-        // Grades are bookmarks too. If the user does not want the grade in
-        // the render we simply leave the grade bookmarks out of the copy.
-        auto bookmarks_duplicate = spawn<bookmark::BookmarksActor>(
-            (bake_grade_ && !*bake_grade_)
-                ? utility::JsonStore(
-                      grade_sidecar::strip_grading_bookmarks(bookmarks_serialisation))
-                : bookmarks_serialisation);
+        auto bookmarks_duplicate = spawn<bookmark::BookmarksActor>(bookmarks_serialisation);
         // link_to(bookmarks_duplicate);
 
         auto playlist_duplicate =
@@ -1322,29 +1315,29 @@ void VideoRenderWorker::prepare_grade(
         return;
     }
 
-    const auto num_grades = grade_sidecar::count_grading_bookmarks(bookmarks_serialisation);
+    // Tell the grading colour op what to do with the frames of our private
+    // copy of the media, through their colour settings: apply the grade
+    // even if the viewer's grade bypass is on, or leave it out. (The grade
+    // layers themselves are bookmarks of the session, which the render
+    // shares with the viewer, so they can't simply be left out of the copy.)
+    for (const auto &m : media) {
+        try {
+            auto params = utility::request_receive<utility::JsonStore>(
+                *sys, m.actor(), colour_pipeline::get_colour_pipe_params_atom_v);
+            if (!params.is_object())
+                params = utility::JsonStore(nlohmann::json::object());
+            params["video_render_bake_grade"] = *bake_grade_;
+            utility::request_receive<bool>(
+                *sys, m.actor(), colour_pipeline::set_colour_pipe_params_atom_v, params);
+        } catch (std::exception &e) {
+            spdlog::debug("{} {}", __PRETTY_FUNCTION__, e.what());
+        }
+    }
 
     if (*bake_grade_) {
-
-        // The viewer has a switch that bypasses all grades. That is meant for
-        // comparing in the viewer only: when the user asks for the grade to be
-        // burnt in, it must be in the render. We tell the grading colour op
-        // through the colour settings of our private copy of the media.
-        for (const auto &m : media) {
-            try {
-                auto params = utility::request_receive<utility::JsonStore>(
-                    *sys, m.actor(), colour_pipeline::get_colour_pipe_params_atom_v);
-                if (!params.is_object())
-                    params = utility::JsonStore(nlohmann::json::object());
-                params["ignore_grading_bypass"] = true;
-                utility::request_receive<bool>(
-                    *sys, m.actor(), colour_pipeline::set_colour_pipe_params_atom_v, params);
-            } catch (std::exception &e) {
-                spdlog::debug("{} {}", __PRETTY_FUNCTION__, e.what());
-            }
-        }
-        log_line(
-            fmt::format("Grade: burnt into the render ({} grade layers found).", num_grades));
+        log_line(fmt::format(
+            "Grade: burnt into the render ({} grade layers found).",
+            grade_sidecar::count_grading_bookmarks(bookmarks_serialisation)));
         return;
     }
 

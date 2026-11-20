@@ -7,10 +7,8 @@
 // JSON that the bookmarks actor serialises to, so this file only needs
 // nlohmann::json and OpenColorIO.
 //
-// Used for:
-//  - leaving the grade out of a render (strip_grading_bookmarks)
-//  - writing the grade next to an ungraded render, as an ASC CDL collection
-//    (.ccc) and/or a 3D LUT (.cube)
+// Used for writing the grade next to an ungraded render, as an ASC CDL
+// collection (.ccc) and/or a 3D LUT (.cube).
 
 #include <array>
 #include <string>
@@ -53,9 +51,6 @@ struct GradeLayer {
 // True if the serialised bookmark (an entry of the "actors" dict that
 // BookmarksActor serialises to) is a grade layer.
 bool is_grading_bookmark(const nlohmann::json &bookmark_actor_json);
-
-// Copy of a BookmarksActor serialisation without any grade layers.
-nlohmann::json strip_grading_bookmarks(const nlohmann::json &bookmarks_serialisation);
 
 // Number of grade layers in a BookmarksActor serialisation.
 size_t count_grading_bookmarks(const nlohmann::json &bookmarks_serialisation);
