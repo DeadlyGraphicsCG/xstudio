@@ -47,6 +47,95 @@
 				"datatype": "json",
 				"context": ["PLUGIN"]
 			},
+			"export_profiles": {
+				"path": "/plugin/video_render/export_profiles",
+				"default_value": [],
+				"description": "Named export profiles for the video renderer. Each one bundles codec preset, container, resolution, colour settings, grade baking and a file naming template.",
+				"value": [
+					{
+						"name": "Graded review - H.264 HD",
+						"video_preset": "H.264 (Film)",
+						"container": "mov",
+						"resolution": "1920x1080 (HD)",
+						"frame_rate": "",
+						"ocio_display": "",
+						"ocio_view": "",
+						"bake_grade": true,
+						"sidecar_cdl": false,
+						"sidecar_lut": false,
+						"output_folder": "",
+						"naming_template": "{media_name}_graded_{version}",
+						"include_annotations": false,
+						"render_audio": true
+					},
+					{
+						"name": "Ungraded ProRes + CDL and LUT",
+						"video_preset": "ProRes 422 HQ ",
+						"container": "mov",
+						"resolution": "1920x1080 (HD)",
+						"frame_rate": "",
+						"ocio_display": "",
+						"ocio_view": "",
+						"bake_grade": false,
+						"sidecar_cdl": true,
+						"sidecar_lut": true,
+						"output_folder": "",
+						"naming_template": "{media_name}_ungraded_{version}",
+						"include_annotations": false,
+						"render_audio": true
+					},
+					{
+						"name": "Graded stills - PNG",
+						"video_preset": "H.264 (Film)",
+						"container": "png",
+						"resolution": "1920x1080 (HD)",
+						"frame_rate": "",
+						"ocio_display": "",
+						"ocio_view": "",
+						"bake_grade": true,
+						"sidecar_cdl": false,
+						"sidecar_lut": false,
+						"output_folder": "",
+						"naming_template": "{media_name}_graded_{version}",
+						"include_annotations": false,
+						"render_audio": false
+					}
+				],
+				"datatype": "json",
+				"context": ["PLUGIN"]
+			},
+			"last_export_profile": {
+				"path": "/plugin/video_render/last_export_profile",
+				"default_value": "",
+				"description": "The export profile that was used last in the video renderer",
+				"value": "",
+				"datatype": "string",
+				"context": ["PLUGIN"]
+			},
+			"bake_grade": {
+				"path": "/plugin/video_render/bake_grade",
+				"default_value": true,
+				"description": "Burn the xSTUDIO grade into rendered videos",
+				"value": true,
+				"datatype": "bool",
+				"context": ["PLUGIN"]
+			},
+			"sidecar_cdl": {
+				"path": "/plugin/video_render/sidecar_cdl",
+				"default_value": false,
+				"description": "When the grade is not burnt in, write it next to the render as an ASC CDL collection (.ccc)",
+				"value": false,
+				"datatype": "bool",
+				"context": ["PLUGIN"]
+			},
+			"sidecar_lut": {
+				"path": "/plugin/video_render/sidecar_lut",
+				"default_value": false,
+				"description": "When the grade is not burnt in, write it next to the render as a 3D LUT (.cube)",
+				"value": false,
+				"datatype": "bool",
+				"context": ["PLUGIN"]
+			},
 			"video_codec_user_presets": {
 				"path": "/plugin/video_render/video_codec_user_presets",
 				"default_value": [],
