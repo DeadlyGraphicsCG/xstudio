@@ -29,6 +29,18 @@ Item{ id: listDiv
 
             property var curr_bookmark_id: helpers.QUuidFromUuidString(attrs.grading_bookmark)
 
+            // Starts editing the name of the selected layer (context menu "Rename...")
+            function renameSelectedLayer() {
+                for (var i = 0; i < count; ++i) {
+                    var item = itemAtIndex(i)
+                    if (item && item.isSelected) {
+                        positionViewAtIndex(i, ListView.Contain)
+                        item.startRename()
+                        return
+                    }
+                }
+            }
+
             delegate: XsPrimaryButton { id: bookmark
                 width: bookmarkList.width
                 height: btnHeight * 1.1
@@ -41,6 +53,22 @@ Item{ id: listDiv
         
                 readonly property bool isSelected: uuid == bookmarkList.curr_bookmark_id
                 property bool isHovered: hovered
+
+                // Layer renaming (double-click on the layer, or "Rename..." in the menu)
+                property bool isRenaming: false
+
+                function startRename() {
+                    isRenaming = true
+                }
+
+                function finishRename(accept) {
+                    if (!isRenaming) return
+                    isRenaming = false
+                    var newName = nameEditor.text.trim()
+                    if (accept && newName != "" && newName != nameDiv.text) {
+                        attrs.grading_action = "Rename Layer|" + uuidRole + "|" + newName
+                    }
+                }
 
                 MouseArea {
                     anchors.fill: parent
@@ -66,6 +94,16 @@ Item{ id: listDiv
                             }
                         }
                     }
+
+                    onDoubleClicked: (mouse) => {
+                        if (mouse.button != Qt.LeftButton) return
+                        // the first click of the double-click may have
+                        // deselected the layer, select it again
+                        if (attrs.grading_bookmark != uuidRole) {
+                            attrs.grading_bookmark = uuidRole
+                        }
+                        bookmark.startRename()
+                    }
                 }
 
                 RowLayout{
@@ -79,10 +117,38 @@ Item{ id: listDiv
                         Layout.fillHeight: true
 
                         text: layerUIName()
+                        color: bookmark.isRenaming ? "transparent" : XsStyleSheet.primaryTextColor
                         font.weight: isSelected? Font.Bold : Font.Normal
                         horizontalAlignment: Text.AlignLeft
                         leftPadding: bookmark.activeIndicator.width + 5
                         elide: Text.ElideRight
+
+                        XsTextField { id: nameEditor
+                            anchors.fill: parent
+                            anchors.leftMargin: bookmark.activeIndicator.width + 2
+                            anchors.topMargin: 2
+                            anchors.bottomMargin: 2
+                            visible: bookmark.isRenaming
+                            horizontalAlignment: TextInput.AlignLeft
+                            leftPadding: 3
+                            bgColor: XsStyleSheet.widgetBgNormalColor
+                            borderColor: XsStyleSheet.accentColor
+                            maximumLength: 128
+
+                            onVisibleChanged: {
+                                if (visible) {
+                                    text = nameDiv.text
+                                    forceActiveFocus()
+                                    selectAll()
+                                }
+                            }
+                            onAccepted: bookmark.finishRename(true)
+                            onActiveFocusChanged: {
+                                // clicking elsewhere keeps the new name
+                                if (!activeFocus) bookmark.finishRename(true)
+                            }
+                            Keys.onEscapePressed: bookmark.finishRename(false)
+                        }
 
                         function layerUIName() {
                             var name = "";

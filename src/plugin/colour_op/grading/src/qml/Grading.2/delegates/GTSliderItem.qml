@@ -35,6 +35,9 @@ Item {
 
                 GTSliderDiv{
                     titleText: abbr_title
+                    rgbData: title == "Saturation" ? attrs.saturation_rgb :
+                             title == "Exposure" ? attrs.exposure_rgb :
+                             title == "Contrast" ? attrs.contrast_rgb : null
                     width: parent.width - dividerWidth
                     height: parent.height
                 }

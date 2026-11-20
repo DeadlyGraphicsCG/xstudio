@@ -29,7 +29,8 @@ Item{ id: menuDiv
 
     XsMenuModelItem {
         menuItemType: "radiogroup"
-        choices: attrs.media_colour_managed ? ["scene_linear", "compositing_log"] : ["raw"]
+        // Working spaces of the OCIO config of the current media
+        choices: attrs.media_colour_managed && attrs.colour_space_options ? attrs.colour_space_options : ["raw"]
         
         property string currentColorSpace: attrs.media_colour_managed ? attrs.colour_space : "raw"
         
@@ -41,7 +42,7 @@ Item{ id: menuDiv
 
         enabled: hasActiveGrade() && attrs.media_colour_managed
         text: ""
-        menuPath: "Color Space"
+        menuPath: "Working Space"
         menuItemPosition: 1
         menuModelName: moreMenu.menu_model_name
     }
@@ -54,11 +55,13 @@ Item{ id: menuDiv
 
     XsMenuModelItem {
         text: "Rename..."
-        enabled: false
+        enabled: hasActiveGrade()
         menuPath: ""
         menuItemPosition: 3
         menuModelName: moreMenu.menu_model_name
-        onActivated: {}
+        onActivated: {
+            bookmarkList.renameSelectedLayer()
+        }
     }
     XsMenuModelItem {
         menuItemType: "divider"
@@ -185,14 +188,15 @@ Item{ id: menuDiv
         var sat = attrs.getAttrValue("Saturation")
         var exp = attrs.getAttrValue("Exposure")
         var cont = attrs.getAttrValue("Contrast")
+        var exp_rgb = attrs.exposure_rgb.value !== undefined ? attrs.exposure_rgb.value : [0.0, 0.0, 0.0]
 
         var nuke_nodes = "";
 
         nuke_nodes += "EXPTool {\n"
         nuke_nodes += "  mode Stops\n"
-        nuke_nodes += "  red " + exp + "\n"
-        nuke_nodes += "  green " + exp + "\n"
-        nuke_nodes += "  blue " + exp + "\n"
+        nuke_nodes += "  red " + (exp + exp_rgb[0]) + "\n"
+        nuke_nodes += "  green " + (exp + exp_rgb[1]) + "\n"
+        nuke_nodes += "  blue " + (exp + exp_rgb[2]) + "\n"
         nuke_nodes += "}\n"
 
         nuke_nodes += "Contrast {\n"

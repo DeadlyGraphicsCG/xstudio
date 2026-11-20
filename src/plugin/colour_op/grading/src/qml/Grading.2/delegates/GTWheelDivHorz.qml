@@ -74,11 +74,22 @@ ColumnLayout { id: wheelDiv
                     valueText: value[index].toFixed(4)
                     indicatorColor: index==0?"red":index==1?"green":"blue"
 
-                    onEdited:{
+                    scrubEnabled: true
+                    scrubValue: value[index]
+                    scrubMin: float_scrub_min[index]
+                    scrubMax: float_scrub_max[index]
+                    scrubStep: (float_scrub_max[index] - float_scrub_min[index]) / 800
+
+                    function setChannel(newValue) {
+                        if (isNaN(newValue)) return
                         var _value = value
-                        _value[index] = parseFloat(currentText)
+                        _value[index] = newValue
                         value = _value
                     }
+
+                    onScrubbed: (newValue) => setChannel(newValue)
+                    onResetRequested: setChannel(default_value[index])
+                    onEdited: setChannel(parseFloat(currentText))
                 }
             }
 

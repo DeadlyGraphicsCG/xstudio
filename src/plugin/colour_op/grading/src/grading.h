@@ -107,6 +107,23 @@ class GradingTool : public plugin::StandardPlugin {
     void refresh_current_grade_from_ui();
     void refresh_ui_from_current_grade();
 
+    // Gives a grade layer a custom name. The name is stored with the grade
+    // (GradingData, so it is saved with the session) and mirrored to the
+    // bookmark user data that the layer list shows.
+    void rename_layer(const utility::Uuid &bookmark_uuid, const std::string &name);
+
+    // Channel check: shows only the "Red", "Green" or "Blue" channel (or "RGB"
+    // for all) in the viewers, using the viewer channel mode of the colour
+    // pipeline (same as the R/G/B viewer hotkeys). With toggle set, asking for
+    // the channel that is already shown goes back to "RGB".
+    // Also reachable via the 'grading_action' attribute with the values
+    // "Channel Red|Green|Blue|RGB" and "Toggle Channel Red|Green|Blue".
+    void set_viewer_channel(const std::string &channel, const bool toggle);
+
+    // Fills the working space menu with the colour spaces of the OCIO config
+    // of the on screen media (plus the current layer value if missing).
+    void update_colour_space_choices();
+
   private:
     // General
     module::IntegerAttribute *tool_opened_count_{nullptr};
@@ -127,6 +144,18 @@ class GradingTool : public plugin::StandardPlugin {
     module::FloatAttribute *saturation_{nullptr};
     module::FloatAttribute *exposure_{nullptr};
     module::FloatAttribute *contrast_{nullptr};
+
+    // Per channel [R, G, B] trims on top of the master values above
+    module::FloatVectorAttribute *saturation_rgb_{nullptr};
+    module::FloatVectorAttribute *exposure_rgb_{nullptr};
+    module::FloatVectorAttribute *contrast_rgb_{nullptr};
+
+    // Name of the viewport the grading panel follows (for the channel check)
+    module::StringAttribute *active_viewport_{nullptr};
+    std::map<std::string, utility::clock::time_point> viewport_last_seen_;
+
+    // Working spaces offered by the OCIO config of the on screen media
+    std::vector<std::string> config_working_spaces_;
 
     // Drawing Mask
     enum class DrawingTool { Draw, Erase, Shape, None };

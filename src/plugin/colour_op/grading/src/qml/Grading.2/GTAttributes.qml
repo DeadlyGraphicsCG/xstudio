@@ -70,6 +70,37 @@ Item {
     }
     property alias colour_space: __colour_space.value
 
+    // Working spaces offered for the selected layer (from the OCIO config)
+    XsAttributeValue {
+        id: __colour_space_options
+        attributeTitle: "colour_space"
+        role: "combo_box_options"
+        model: grading_tool_attrs_data
+    }
+    property alias colour_space_options: __colour_space_options.value
+
+    // The viewport followed by the channel check buttons, and its channel
+    // mode ("RGB", "Red", "Green", "Blue"...), which lives on the colour
+    // pipeline (viewer toolbar) attributes of that viewport.
+    XsAttributeValue {
+        id: __active_viewport
+        attributeTitle: "active_viewport"
+        model: grading_tool_attrs_data
+    }
+    property alias active_viewport: __active_viewport.value
+
+    XsModuleData {
+        id: viewer_toolbar_attrs
+        modelDataName: active_viewport ? active_viewport + "_toolbar" : ""
+    }
+
+    XsAttributeValue {
+        id: __viewer_channel
+        attributeTitle: "Channel"
+        model: viewer_toolbar_attrs
+    }
+    property alias viewer_channel: __viewer_channel.value
+
     XsAttributeValue {
         id: __mask_tool_active
         attributeTitle: "mask_tool_active"
@@ -131,6 +162,28 @@ Item {
         model: grading_tool_attrs_data
     }
     property alias contrast: __contrast.values
+
+    // Per channel [R, G, B] trims of the three values above
+    XsAttributeFullData {
+        id: __saturation_rgb
+        attributeTitle: "Saturation RGB"
+        model: grading_tool_attrs_data
+    }
+    property alias saturation_rgb: __saturation_rgb.values
+
+    XsAttributeFullData {
+        id: __exposure_rgb
+        attributeTitle: "Exposure RGB"
+        model: grading_tool_attrs_data
+    }
+    property alias exposure_rgb: __exposure_rgb.values
+
+    XsAttributeFullData {
+        id: __contrast_rgb
+        attributeTitle: "Contrast RGB"
+        model: grading_tool_attrs_data
+    }
+    property alias contrast_rgb: __contrast_rgb.values
 
     ///////////////////////////////////////////////////////////////////////
     // this provides access to the attributes in the "grading_sliders" group

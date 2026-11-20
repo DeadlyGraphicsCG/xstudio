@@ -26,6 +26,24 @@ When you want to change an existing grade, click on the grade layer item in the 
 * Delete the selected grade with the trashcan button
 * Set the grade to be a single frame or the full duration of the media clip with the corresponding button
 
+* Double-click a grade layer (or use **Rename...** in the layer menu) to give it a name. Press Enter to keep the name or Escape to cancel. The name is saved with the grade.
+
+Adjusting Values
+----------------
+
+* **Exposure**, **Contrast** and **Saturation** each have **R**, **G** and **B** fields under their slider. These change one colour channel on top of the main value: the exposure fields are added to the main exposure (in stops), the contrast and saturation fields are multiplied with the main value. The reset button above a slider also resets its R, G and B fields.
+* Every number field can be dragged left or right with the mouse to change its value. Hold **Shift** for small steps or **Ctrl** for big steps. Double-click a field (or a slider) to reset it to its default value. A single click lets you type a value.
+
+Working Space
+-------------
+
+Each grade layer is applied in a **working space**, picked from the colour spaces of the OCIO config used by the media (for example ``scene_linear`` or ``compositing_log``, or a log space such as ACEScct). The image is converted into that space before the layer is applied and converted back afterwards. Choose it with the **Working space** menu above the sliders. This needs media whose colour management names an OCIO config (normally set by your pipeline).
+
+Channel Check
+-------------
+
+Use the **R**, **G** and **B** buttons next to the working space menu to see a single colour channel in the viewer while grading. Click the button again to go back to all channels. These buttons use the same channel mode as the viewer toolbar and the viewer **R**, **G** and **B** hotkeys.
+
 Polygon Grade Masks
 -------------------
 
