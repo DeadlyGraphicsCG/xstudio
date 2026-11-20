@@ -16,17 +16,18 @@ namespace OCIO = OCIO_NAMESPACE;
 namespace xstudio::colour_pipeline {
 
 class GradingTool : public plugin::StandardPlugin {
-    public:
-        inline static const utility::Uuid PLUGIN_UUID =
-            utility::Uuid("5598e01e-c6bc-4cf9-80ff-74bb560df12a");
+  public:
+    inline static const utility::Uuid PLUGIN_UUID =
+        utility::Uuid("5598e01e-c6bc-4cf9-80ff-74bb560df12a");
 
   public:
     GradingTool(caf::actor_config &cfg, const utility::JsonStore &init_settings);
     ~GradingTool() override = default;
 
     utility::BlindDataObjectPtr onscreen_render_data(
-        const media_reader::ImageBufPtr &, const std::string & /*viewport_name*/,
-        const utility::Uuid &/*playhead_uuid*/,
+        const media_reader::ImageBufPtr &,
+        const std::string & /*viewport_name*/,
+        const utility::Uuid & /*playhead_uuid*/,
         const bool is_hero_image,
         const bool images_are_in_grid_layout) const override;
 
@@ -37,29 +38,27 @@ class GradingTool : public plugin::StandardPlugin {
     void images_going_on_screen(
         const media_reader::ImageBufDisplaySetPtr &images,
         const std::string viewport_name,
-        const bool playhead_playing
-    ) override;
+        const bool playhead_playing) override;
 
     void on_screen_media_changed(
-        caf::actor,
-        const utility::MediaReference &,
-        const utility::JsonStore &
-    ) override;
+        caf::actor, const utility::MediaReference &, const utility::JsonStore &) override;
 
     // Interactions
 
-    void attribute_changed(
-        const utility::Uuid &attribute_uuid, const int role) override;
+    void attribute_changed(const utility::Uuid &attribute_uuid, const int role) override;
 
     void register_hotkeys() override;
-    void hotkey_pressed(const utility::Uuid &hotkey_uuid, const std::string &context, const std::string &window) override;
+    void hotkey_pressed(
+        const utility::Uuid &hotkey_uuid,
+        const std::string &context,
+        const std::string &window) override;
 
     bool pointer_event(const ui::PointerEvent &e) override;
 
     void turn_off_overlay_interaction() override;
 
   protected:
-      caf::message_handler message_handler_extensions() override;
+    caf::message_handler message_handler_extensions() override;
 
   private:
     bool grading_tools_active() const;
@@ -82,7 +81,8 @@ class GradingTool : public plugin::StandardPlugin {
     void clear_shapes();
     void clear_grade();
 
-    void save_cdl(const std::string &filepath, const ui::viewport::GradingData &grading_data) const;
+    void
+    save_cdl(const std::string &filepath, const ui::viewport::GradingData &grading_data) const;
 
     std::vector<caf::actor> selected_media_actors() const;
     utility::JsonStore media_actor_colour_params(const caf::actor &media_actor);
@@ -93,7 +93,10 @@ class GradingTool : public plugin::StandardPlugin {
     utility::UuidList current_image_bookmarks();
     void create_bookmark_if_empty();
     void create_bookmark();
-    void copy_bookmark_on_media(const bookmark::BookmarkAndAnnotationPtr &from, media::AVFrameID &frame_id, int layerno);
+    void copy_bookmark_on_media(
+        const bookmark::BookmarkAndAnnotationPtr &from,
+        media::AVFrameID &frame_id,
+        int layerno);
     void select_bookmark(const utility::Uuid &uuid);
     void select_bookmark_on_media_changed(
         const utility::Uuid &prevMediaUuid, const utility::Uuid &newMediaUuid);
@@ -106,24 +109,24 @@ class GradingTool : public plugin::StandardPlugin {
 
   private:
     // General
-    module::IntegerAttribute *tool_opened_count_    {nullptr};
-    module::StringAttribute  *grading_action_       {nullptr};
-    module::BooleanAttribute *grading_bypass_       {nullptr};
-    module::StringAttribute  *drawing_action_       {nullptr};
-    module::BooleanAttribute *media_colour_managed_ {nullptr};
-    module::BooleanAttribute *grade_copying_        {nullptr};
+    module::IntegerAttribute *tool_opened_count_{nullptr};
+    module::StringAttribute *grading_action_{nullptr};
+    module::BooleanAttribute *grading_bypass_{nullptr};
+    module::StringAttribute *drawing_action_{nullptr};
+    module::BooleanAttribute *media_colour_managed_{nullptr};
+    module::BooleanAttribute *grade_copying_{nullptr};
 
     // Grading
-    module::StringAttribute       *grading_bookmark_ {nullptr};
-    module::StringAttribute       *working_space_    {nullptr};
-    module::StringChoiceAttribute *colour_space_     {nullptr};
+    module::StringAttribute *grading_bookmark_{nullptr};
+    module::StringAttribute *working_space_{nullptr};
+    module::StringChoiceAttribute *colour_space_{nullptr};
 
-    module::FloatVectorAttribute  *slope_      {nullptr};
-    module::FloatVectorAttribute  *offset_     {nullptr};
-    module::FloatVectorAttribute  *power_      {nullptr};
-    module::FloatAttribute        *saturation_ {nullptr};
-    module::FloatAttribute        *exposure_   {nullptr};
-    module::FloatAttribute        *contrast_   {nullptr};
+    module::FloatVectorAttribute *slope_{nullptr};
+    module::FloatVectorAttribute *offset_{nullptr};
+    module::FloatVectorAttribute *power_{nullptr};
+    module::FloatAttribute *saturation_{nullptr};
+    module::FloatAttribute *exposure_{nullptr};
+    module::FloatAttribute *contrast_{nullptr};
 
     // Drawing Mask
     enum class DrawingTool { Draw, Erase, Shape, None };
@@ -131,18 +134,17 @@ class GradingTool : public plugin::StandardPlugin {
         {DrawingTool::Shape, "Shape"},
         {DrawingTool::None, "None"},
         {DrawingTool::Draw, "Draw"},
-        {DrawingTool::Erase, "Erase"}
-    };
+        {DrawingTool::Erase, "Erase"}};
 
-    module::StringChoiceAttribute *drawing_tool_      {nullptr};
-    module::IntegerAttribute      *draw_pen_size_     {nullptr};
-    module::IntegerAttribute      *erase_pen_size_    {nullptr};
-    module::IntegerAttribute      *pen_opacity_       {nullptr};
-    module::IntegerAttribute      *pen_softness_      {nullptr};
-    module::ColourAttribute       *pen_colour_        {nullptr};
-    module::BooleanAttribute      *shape_invert_      {nullptr};
-    module::BooleanAttribute      *polygon_init_      {nullptr};
-    module::BooleanAttribute      *interacting_       {nullptr};
+    module::StringChoiceAttribute *drawing_tool_{nullptr};
+    module::IntegerAttribute *draw_pen_size_{nullptr};
+    module::IntegerAttribute *erase_pen_size_{nullptr};
+    module::IntegerAttribute *pen_opacity_{nullptr};
+    module::IntegerAttribute *pen_softness_{nullptr};
+    module::ColourAttribute *pen_colour_{nullptr};
+    module::BooleanAttribute *shape_invert_{nullptr};
+    module::BooleanAttribute *polygon_init_{nullptr};
+    module::BooleanAttribute *interacting_{nullptr};
 
     module::IntegerAttribute *mask_selected_shape_{nullptr};
     module::BooleanAttribute *mask_shapes_visible_{nullptr};
@@ -150,10 +152,8 @@ class GradingTool : public plugin::StandardPlugin {
 
     enum DisplayMode { Mask, Grade };
     const std::map<DisplayMode, std::string> display_mode_names_ = {
-        {DisplayMode::Grade, "Grade"},
-        {DisplayMode::Mask, "Mask"}
-    };
-    module::StringChoiceAttribute *display_mode_attribute_  {nullptr};
+        {DisplayMode::Grade, "Grade"}, {DisplayMode::Mask, "Mask"}};
+    module::StringChoiceAttribute *display_mode_attribute_{nullptr};
 
     // Shortcuts
     utility::Uuid bypass_hotkey_;
@@ -161,7 +161,7 @@ class GradingTool : public plugin::StandardPlugin {
     utility::Uuid redo_hotkey_;
 
     // Current media info (eg. for Bookmark creation)
-    bool playhead_is_playing_ {false};
+    bool playhead_is_playing_{false};
     int playhead_media_frame_ = {0};
 
     media_reader::ImageBufDisplaySetPtr viewport_current_images_;
@@ -180,4 +180,4 @@ class GradingTool : public plugin::StandardPlugin {
     std::vector<caf::actor> grading_colour_op_actors_;
 };
 
-} // xstudio::colour_pipeline
+} // namespace xstudio::colour_pipeline

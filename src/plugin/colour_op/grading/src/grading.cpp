@@ -371,9 +371,7 @@ void GradingTool::on_screen_media_changed(
                 current_media_uuid_                     = media_uuid;
                 select_bookmark_on_media_changed(previous_media_uuid, current_media_uuid_);
             },
-            [=](const caf::error &err) {
-                utility::log_caf_error(err);
-            });
+            [=](const caf::error &err) { utility::log_caf_error(err); });
 }
 
 void GradingTool::attribute_changed(const utility::Uuid &attribute_uuid, const int role) {

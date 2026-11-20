@@ -10,55 +10,52 @@
 
 namespace xstudio::ui::viewport {
 
-    /*
-    The pre_viewport_draw_gpu_hook is called with the GL context of the
-    viewport in an active state. We draw the strokes of the grading mask
-    into a GL texture, and set the texture ID on the colour pipeline data
-    of the image that is passed in. When the image is drawn to the screen
-    our shader can sample the texture to mask the grade.
-    */
+/*
+The pre_viewport_draw_gpu_hook is called with the GL context of the
+viewport in an active state. We draw the strokes of the grading mask
+into a GL texture, and set the texture ID on the colour pipeline data
+of the image that is passed in. When the image is drawn to the screen
+our shader can sample the texture to mask the grade.
+*/
 
-    class GradingMaskRenderer : public plugin::GPUPreDrawHook {
+class GradingMaskRenderer : public plugin::GPUPreDrawHook {
 
-        struct RenderLayer {
-            opengl::OpenGLOffscreenRendererPtr offscreen_renderer;
-            utility::clock::time_point last_canvas_change_time;
-            utility::Uuid last_canvas_uuid;
-            float last_image_aspect_ratio;
-        };
-
-      public:
-
-        GradingMaskRenderer(const std::string viewport_name);
-
-        void pre_viewport_draw_gpu_hook(
-            const Imath::M44f &transform_window_to_viewport_space,
-            const Imath::M44f &transform_viewport_to_image_space,
-            const float viewport_du_dpixel,
-            xstudio::media_reader::ImageBufPtr &image) override;
-
-      private:
-
-        size_t layer_count() const;
-        void add_layer();
-
-        void render_grading_data_masks(
-            const std::vector<GradingInfo> &grades,
-            xstudio::media_reader::ImageBufPtr &image);
-
-        void render_layer(
-            const GradingData& data,
-            RenderLayer& layer,
-            const xstudio::media_reader::ImageBufPtr &frame);
-
-        std::mutex immediate_data_gate_;
-        utility::BlindDataObjectPtr immediate_data_;
-
-        std::vector<RenderLayer> render_layers_;
-        std::unique_ptr<opengl::OpenGLCanvasRenderer> canvas_renderer_;
-        const std::string viewport_name_;
+    struct RenderLayer {
+        opengl::OpenGLOffscreenRendererPtr offscreen_renderer;
+        utility::clock::time_point last_canvas_change_time;
+        utility::Uuid last_canvas_uuid;
+        float last_image_aspect_ratio;
     };
 
-    using GradingMaskRendererSPtr = std::shared_ptr<GradingMaskRenderer>;
+  public:
+    GradingMaskRenderer(const std::string viewport_name);
 
-} // end namespace viewport
+    void pre_viewport_draw_gpu_hook(
+        const Imath::M44f &transform_window_to_viewport_space,
+        const Imath::M44f &transform_viewport_to_image_space,
+        const float viewport_du_dpixel,
+        xstudio::media_reader::ImageBufPtr &image) override;
+
+  private:
+    size_t layer_count() const;
+    void add_layer();
+
+    void render_grading_data_masks(
+        const std::vector<GradingInfo> &grades, xstudio::media_reader::ImageBufPtr &image);
+
+    void render_layer(
+        const GradingData &data,
+        RenderLayer &layer,
+        const xstudio::media_reader::ImageBufPtr &frame);
+
+    std::mutex immediate_data_gate_;
+    utility::BlindDataObjectPtr immediate_data_;
+
+    std::vector<RenderLayer> render_layers_;
+    std::unique_ptr<opengl::OpenGLCanvasRenderer> canvas_renderer_;
+    const std::string viewport_name_;
+};
+
+using GradingMaskRendererSPtr = std::shared_ptr<GradingMaskRenderer>;
+
+} // namespace xstudio::ui::viewport
