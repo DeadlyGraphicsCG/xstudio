@@ -354,9 +354,7 @@ KeypressMonitor::KeypressMonitor(caf::actor_config &cfg) : caf::event_based_acto
         [=](json_store::update_atom, const utility::JsonStore &) {},
 
         [=](xstudio::broadcast::broadcast_down_atom, const caf::actor_addr &) {},
-        [=](const error &err) mutable {
-            utility::log_caf_error(err);
-        });
+        [=](const error &err) mutable { utility::log_caf_error(err); });
 }
 
 void KeypressMonitor::apply_hotkey_overrides(const utility::Uuid &hotkey_id) {
