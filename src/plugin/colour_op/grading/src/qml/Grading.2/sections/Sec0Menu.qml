@@ -177,6 +177,31 @@ Item{ id: menuDiv
         }
     }
 
+    // Opens the standard hotkeys dialog, filtered to the grading shortcuts
+    // and the viewer channel checks (red / green / blue / RGB), so they can
+    // be looked up and remapped from the grading panel.
+    Loader {
+        id: gradingHotkeysLoader
+    }
+
+    Component {
+        id: gradingHotkeysDialog
+        XsHotkeysDialog {
+            initialFilter: "Grading|Channel|RGB Mode|Luminance"
+        }
+    }
+
+    XsMenuModelItem {
+        text: "Keyboard Shortcuts..."
+        menuPath: ""
+        menuItemPosition: 11
+        menuModelName: moreMenu.menu_model_name
+        onActivated: {
+            gradingHotkeysLoader.sourceComponent = gradingHotkeysDialog
+            gradingHotkeysLoader.item.visible = true
+        }
+    }
+
     function copyNukeNodes() {
 
         var offset = attrs.getAttrValue("Offset")
